@@ -1,7 +1,7 @@
 """
 News agent: fetch top world headlines, email one-liners for new items only.
 
-Dedupes via filesystem memory so the same story is not emailed twice.
+Dedupes via claw.news_sent so the same story is not emailed twice.
 Always aims for up to 5 new items per run.
 """
 
@@ -23,7 +23,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from channels.gmail import send_email
-from memory_store import active_memory_dir, ensure_layout
+from memory_store import ensure_layout
+from user_scope import current_user_id
+
+import db
 
 # BBC World + Google News World (no API key)
 RSS_FEEDS = [
@@ -36,8 +39,8 @@ MAX_SENT_IDS = 500
 USER_AGENT = "python-claw-news-agent/1.0"
 
 
-def _sent_file():
-    return active_memory_dir() / "news_sent.json"
+def _owner() -> str:
+    return current_user_id() or db.SYSTEM_USER_ID
 
 
 def _news_recipient(explicit: str | None) -> str:
@@ -64,32 +67,55 @@ def _clean_text(text: str) -> str:
 
 def _load_sent() -> dict[str, Any]:
     ensure_layout()
-    if not _sent_file().exists():
-        return {"ids": [], "items": {}}
-    try:
-        data = json.loads(_sent_file().read_text(encoding="utf-8"))
-        if not isinstance(data, dict):
-            return {"ids": [], "items": {}}
-        data.setdefault("ids", [])
-        data.setdefault("items", {})
-        return data
-    except (json.JSONDecodeError, OSError):
-        return {"ids": [], "items": {}}
+    rows = db.fetch_all(
+        """
+        SELECT story_id, title, link, extract(epoch FROM sent_at) AS sent_at
+        FROM news_sent
+        WHERE user_id = %s
+        ORDER BY sent_at
+        """,
+        (_owner(),),
+    )
+    ids = [str(row["story_id"]) for row in rows]
+    items = {
+        str(row["story_id"]): {
+            "title": row.get("title") or "",
+            "link": row.get("link") or "",
+            "sent_at": float(row["sent_at"] or 0),
+        }
+        for row in rows
+    }
+    return {"ids": ids, "items": items}
 
 
 def _save_sent(data: dict[str, Any]) -> None:
     ensure_layout()
+    user_id = _owner()
     ids = list(data.get("ids") or [])
     items = dict(data.get("items") or {})
     if len(ids) > MAX_SENT_IDS:
-        drop = ids[:-MAX_SENT_IDS]
         ids = ids[-MAX_SENT_IDS:]
-        for sid in drop:
-            items.pop(sid, None)
-    _sent_file().write_text(
-        json.dumps({"ids": ids, "items": items}, indent=2),
-        encoding="utf-8",
-    )
+        items = {sid: items[sid] for sid in ids if sid in items}
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM news_sent WHERE user_id = %s", (user_id,))
+            for sid in ids:
+                item = items.get(sid) or {}
+                sent_at = float(item.get("sent_at") or time.time())
+                cur.execute(
+                    """
+                    INSERT INTO news_sent (user_id, story_id, title, link, sent_at)
+                    VALUES (%s, %s, %s, %s, to_timestamp(%s))
+                    """,
+                    (
+                        user_id,
+                        sid,
+                        str(item.get("title") or ""),
+                        str(item.get("link") or ""),
+                        sent_at,
+                    ),
+                )
+        conn.commit()
 
 
 def _fetch_feed(url: str, timeout: int = 20) -> list[dict[str, Any]]:

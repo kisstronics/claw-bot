@@ -2,9 +2,9 @@
 Reminder agent: anniversaries for today, and tasks scheduled to remind.
 
 Runs hourly. Sources:
-  - memory/MEMORY.md and memory/notes/*.md
+  - claw.memory_core / claw.memory_notes
     (anniversary, birthday, or any line marked remindable, with a date)
-  - memory/reminders.json for explicit tasks
+  - claw.reminders for explicit tasks
 
 Notifies once per occurrence on Telegram. Recurring items fire again on the
 next due day; one-shot tasks fire once.
@@ -24,25 +24,17 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from channels.telegram import bot_handler
-from memory_store import active_memory_dir, ensure_layout, journal
+from memory_store import ensure_layout, journal, memory_texts_for_events
 from tools.basic import resolve_relative
+from user_scope import current_user_id
 
+import db
 
-def _tasks_file():
-    return active_memory_dir() / "reminders.json"
-
-
-def _sent_file():
-    return active_memory_dir() / "reminder_sent.json"
-
-
-def _memory_file():
-    return active_memory_dir() / "MEMORY.md"
-
-
-def _notes_dir():
-    return active_memory_dir() / "notes"
 MAX_SENT = 500
+
+
+def _owner() -> str:
+    return current_user_id() or db.SYSTEM_USER_ID
 
 _MONTHS = {
     "january": 1,
@@ -301,30 +293,53 @@ def events_from_text(text: str, source: str = "memory") -> list[dict[str, Any]]:
     return found
 
 
-def _load_json(path, default: dict[str, Any]) -> dict[str, Any]:
-    ensure_layout()
-    if not path.exists():
-        return dict(default)
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return dict(default)
-    return data if isinstance(data, dict) else dict(default)
-
-
-def _save_json(path, data: dict[str, Any]) -> None:
-    ensure_layout()
-    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
-
-
 def load_tasks() -> list[dict[str, Any]]:
-    data = _load_json(_tasks_file(), {"tasks": []})
-    tasks = data.get("tasks") or []
-    return [t for t in tasks if isinstance(t, dict)]
+    ensure_layout()
+    rows = db.fetch_all(
+        """
+        SELECT id, text, when_at, recurring
+        FROM reminders
+        WHERE user_id = %s
+        ORDER BY when_at, id
+        """,
+        (_owner(),),
+    )
+    return [
+        {
+            "id": row["id"],
+            "text": row["text"],
+            "when": row["when_at"],
+            "recurring": row["recurring"],
+        }
+        for row in rows
+    ]
 
 
 def _save_tasks(tasks: list[dict[str, Any]]) -> None:
-    _save_json(_tasks_file(), {"tasks": tasks})
+    ensure_layout()
+    user_id = _owner()
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM reminders WHERE user_id = %s", (user_id,))
+            for task in tasks:
+                if not isinstance(task, dict):
+                    continue
+                task_id = str(task.get("id") or "").strip()
+                text = str(task.get("text") or "").strip()
+                when = str(task.get("when") or "").strip()
+                if not task_id or not text or not when:
+                    continue
+                recurring = task.get("recurring") or None
+                if recurring not in {None, "yearly", "daily"}:
+                    recurring = None
+                cur.execute(
+                    """
+                    INSERT INTO reminders (id, user_id, text, when_at, recurring)
+                    VALUES (%s, %s, %s, %s, %s)
+                    """,
+                    (task_id, user_id, text, when, recurring),
+                )
+        conn.commit()
 
 
 def tasks_as_events() -> list[dict[str, Any]]:
@@ -353,14 +368,7 @@ def load_events() -> list[dict[str, Any]]:
     events: list[dict[str, Any]] = []
     seen: set[str] = set()
 
-    texts: list[tuple[str, str]] = []
-    if _memory_file().exists():
-        texts.append(("memory", _memory_file().read_text(encoding="utf-8")))
-    if _notes_dir().exists():
-        for path in sorted(_notes_dir().glob("*.md")):
-            texts.append((f"notes/{path.name}", path.read_text(encoding="utf-8")))
-
-    for source, text in texts:
+    for source, text in memory_texts_for_events():
         for event in events_from_text(text, source):
             if event["id"] in seen:
                 continue
@@ -414,23 +422,49 @@ def _sent_key(event: dict[str, Any], today: date) -> str:
 
 
 def _load_sent() -> dict[str, Any]:
-    data = _load_json(_sent_file(), {"sent": {}})
-    sent = data.get("sent")
-    if not isinstance(sent, dict):
-        sent = {}
+    ensure_layout()
+    rows = db.fetch_all(
+        "SELECT event_key, sent_on FROM reminder_sent WHERE user_id = %s",
+        (_owner(),),
+    )
+    sent = {
+        str(row["event_key"]): row["sent_on"].isoformat()
+        if hasattr(row["sent_on"], "isoformat")
+        else str(row["sent_on"])
+        for row in rows
+    }
     return {"sent": sent}
 
 
 def _mark_sent(keys: list[str], today: date) -> None:
-    data = _load_sent()
-    sent: dict[str, str] = dict(data.get("sent") or {})
-    for key in keys:
-        sent[key] = today.isoformat()
-    if len(sent) > MAX_SENT:
-        # Drop oldest calendar days first; keys without a date stay.
-        ordered = sorted(sent.items(), key=lambda item: item[1])
-        sent = dict(ordered[-MAX_SENT:])
-    _save_json(_sent_file(), {"sent": sent})
+    ensure_layout()
+    user_id = _owner()
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            for key in keys:
+                cur.execute(
+                    """
+                    INSERT INTO reminder_sent (user_id, event_key, sent_on)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (user_id, event_key) DO UPDATE
+                    SET sent_on = EXCLUDED.sent_on
+                    """,
+                    (user_id, key, today),
+                )
+            cur.execute(
+                """
+                DELETE FROM reminder_sent rs
+                WHERE rs.user_id = %s
+                  AND rs.ctid IN (
+                    SELECT ctid FROM reminder_sent
+                    WHERE user_id = %s
+                    ORDER BY sent_on ASC
+                    OFFSET %s
+                  )
+                """,
+                (user_id, user_id, MAX_SENT),
+            )
+        conn.commit()
 
 
 def _format_message(items: list[dict[str, Any]], today: date) -> str:

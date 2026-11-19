@@ -53,6 +53,7 @@ nav { display: flex; flex-direction: column; gap: 6px; }
   padding: 10px 12px; border-radius: 12px;
 }
 .nav.active, .nav:hover { background: rgba(255,255,255,0.08); color: white; }
+.nav[hidden] { display: none !important; }
 .aside-note { margin-top: auto; color: #b7aea2; font-size: 0.85rem; line-height: 1.45; }
 
 main { padding: 32px 40px 48px; max-width: 980px; }
@@ -165,13 +166,17 @@ th { color: var(--muted); font-weight: 500; }
   h1 { font-size: 1.8rem; }
 }
 
-.app[hidden], .gate[hidden] { display: none !important; }
 .gate {
   min-height: 100vh;
   display: grid;
   place-items: center;
   padding: 24px;
 }
+body.authed #gate,
+#shell[hidden],
+#gate[hidden] { display: none !important; }
+body.authed #shell { display: grid; }
+body:not(.authed) #shell { display: none !important; }
 .login-card { width: min(440px, 100%); display: grid; gap: 12px; justify-items: center; text-align: center; }
 .login-card h1 { font-size: 2rem; }
 .login-card .note { max-width: 36ch; }

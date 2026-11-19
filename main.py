@@ -3,6 +3,13 @@
 from __future__ import annotations
 
 import os
+import sys
+
+if sys.version_info < (3, 12):
+    raise SystemExit(
+        f"Python 3.12+ is required (found {sys.version.split()[0]}). "
+        "Install 3.12+ and recreate your venv."
+    )
 
 from api import app
 

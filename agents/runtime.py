@@ -43,8 +43,9 @@ COMMAND_TIMEOUT_SEC = 60
 _SYSTEM_PROMPT_FILE = SYSTEM_PROMPT_PATH
 
 DEFAULT_SYSTEM_PROMPT = (
-    "You are a helpful assistant with filesystem memory. "
-    "Use the memory tool to remember/recall facts. "
+    "You are a helpful assistant with persistent memory in Postgres. "
+    "Facts in Persistent memory below are already loaded — use them to answer. "
+    "Use the memory tool to remember new facts, or to search/recall when needed. "
     "Telegram is the default notify channel."
 )
 
@@ -58,14 +59,14 @@ def load_system_prompt() -> str:
 
 
 def build_system_prompt() -> str:
-    """Base prompt + system clock + live core memory from disk."""
+    """Base prompt + system clock + live core memory and notes from Postgres."""
     base = load_system_prompt()
-    core = memory_store.load_core_memory()
+    memory = memory_store.load_memory_for_prompt()
     return (
         f"{base}\n\n"
         f"{clock_prompt_block()}\n\n"
-        "## Persistent memory (from memory/MEMORY.md)\n"
-        f"{core}\n"
+        "## Persistent memory (core + notes)\n"
+        f"{memory}\n"
     )
 
 
