@@ -1,0 +1,5 @@
+.env
+data/
+token-usage.log
+__pycache__/
+*.pyc

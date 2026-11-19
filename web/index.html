@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Knics</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,520;9..144,650&family=Outfit:wght@380;500;640&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <div id="gate" class="gate">
+    <div class="card login-card">
+      <p class="eyebrow">Knics</p>
+      <h1>Sign in with Telegram</h1>
+      <p class="note">Tap the button, confirm in Telegram, and you are signed in.</p>
+      <div id="telegram-login" class="telegram-login"></div>
+      <p id="login-domain" class="note"></p>
+      <p id="login-status" class="status"></p>
+    </div>
+  </div>
+  <div class="app" id="shell" hidden>
+    <aside>
+      <div class="brand">
+        <span class="mark">K</span>
+        <div>
+          <strong>Knics</strong>
+          <small id="brand-user"></small>
+          <small id="brand-model">loading…</small>
+        </div>
+      </div>
+      <nav>
+        <button class="nav active" data-panel="talk">Talk</button>
+        <button class="nav" data-panel="schedules">Schedules</button>
+        <button class="nav" data-panel="models">Models</button>
+        <button class="nav" data-panel="email">Email</button>
+        <button class="nav" data-panel="usage">Usage</button>
+      </nav>
+      <button id="logout" class="ghost" type="button">Log out</button>
+      <p class="aside-note">Memory, schedules, and email stay with your Telegram account.</p>
+    </aside>
+    <main>
+      <section id="talk" class="panel visible">
+        <header class="panel-head">
+          <div>
+            <p class="eyebrow">Conversation</p>
+            <h1>Talk to the agent</h1>
+          </div>
+          <button id="new-chat" class="ghost" type="button">New chat</button>
+        </header>
+        <div id="thread" class="thread"></div>
+        <form id="chat-form" class="composer">
+          <textarea id="chat-input" rows="2" placeholder="Ask for a reminder, an email, or the news…" required></textarea>
+          <button type="submit" id="chat-send">Send</button>
+        </form>
+      </section>
+
+      <section id="schedules" class="panel">
+        <header class="panel-head">
+          <div>
+            <p class="eyebrow">Heartbeat</p>
+            <h1>Schedules</h1>
+          </div>
+        </header>
+        <form id="schedule-form" class="card form-grid">
+          <label>Name <input name="name" required placeholder="morning_digest" /></label>
+          <label>Every
+            <input name="minutes" type="number" min="1" value="60" required />
+            <span>minutes</span>
+          </label>
+          <label>Kind
+            <select name="handler">
+              <option value="">Prompt the agent</option>
+              <option value="news_digest">News digest</option>
+              <option value="reminders">Reminders</option>
+            </select>
+          </label>
+          <label class="wide">Prompt
+            <textarea name="prompt" rows="3" placeholder="What should the agent do on this schedule?"></textarea>
+          </label>
+          <div class="form-actions">
+            <button type="submit" id="schedule-submit">Save schedule</button>
+            <button type="button" id="schedule-cancel" class="ghost" hidden>Cancel</button>
+          </div>
+        </form>
+        <div id="schedule-list" class="stack"></div>
+      </section>
+
+      <section id="models" class="panel">
+        <header class="panel-head">
+          <div>
+            <p class="eyebrow">Runtime</p>
+            <h1>Model</h1>
+          </div>
+        </header>
+        <form id="model-form" class="card form-grid">
+          <label>Provider
+            <select name="provider" id="provider"></select>
+          </label>
+          <label>Model
+            <select name="model_pick" id="model-pick"></select>
+          </label>
+          <label class="wide">Model id
+            <input name="model_id" id="model-id" required placeholder="provider/model" />
+          </label>
+          <div class="form-actions">
+            <button type="submit">Use this model</button>
+            <span id="model-status" class="status"></span>
+          </div>
+        </form>
+      </section>
+
+      <section id="email" class="panel">
+        <header class="panel-head">
+          <div>
+            <p class="eyebrow">Mailbox</p>
+            <h1>Email</h1>
+          </div>
+        </header>
+        <form id="email-form" class="card form-grid">
+          <label>Email
+            <input name="email" type="email" required placeholder="you@gmail.com" />
+          </label>
+          <label>App password
+            <input name="app_password" type="password" autocomplete="new-password" placeholder="Leave blank to keep the saved password" />
+          </label>
+          <label>IMAP server
+            <input name="imap_server" value="imap.gmail.com" required />
+          </label>
+          <label>SMTP server
+            <input name="smtp_server" value="smtp.gmail.com" required />
+          </label>
+          <label>SMTP port
+            <input name="smtp_port" type="number" min="1" max="65535" value="587" required />
+          </label>
+          <label>News recipient
+            <input name="news_to" type="email" placeholder="Where news digests go" />
+          </label>
+          <div class="form-actions">
+            <button type="submit">Save email</button>
+            <span id="email-status" class="status"></span>
+          </div>
+        </form>
+        <p class="note">These settings are used only for your account. A Gmail app password is stored on this machine, not in the browser after you save.</p>
+      </section>
+
+      <section id="usage" class="panel">
+        <header class="panel-head">
+          <div>
+            <p class="eyebrow">Performance</p>
+            <h1>Token usage</h1>
+          </div>
+          <button id="refresh-usage" class="ghost" type="button">Refresh</button>
+        </header>
+        <div id="usage-cards" class="stats"></div>
+        <p id="usage-note" class="note"></p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>When</th>
+                <th>Model</th>
+                <th>In</th>
+                <th>Out</th>
+                <th>Cost</th>
+                <th>Time</th>
+              </tr>
+            </thead>
+            <tbody id="usage-rows"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

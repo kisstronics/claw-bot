@@ -1,0 +1,8 @@
+{
+  "email": "soft.arch.kishore@gmail.com",
+  "app_password": "dqiujboflebjsilj",
+  "imap_server": "imap.gmail.com",
+  "smtp_server": "smtp.gmail.com",
+  "smtp_port": 587,
+  "news_to": ""
+}

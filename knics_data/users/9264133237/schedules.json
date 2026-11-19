@@ -1,0 +1,25 @@
+{
+  "jobs": [
+    {
+      "name": "check_gmail",
+      "enabled": false,
+      "every_seconds": 300,
+      "initial_delay_seconds": 10,
+      "prompt": "Scheduled check: use read_gmail with unread_only=true to fetch new inbox messages (they will be marked read). Summarize anything important. Notify the user via telegram_bot_handler with action=send and that summary. If nothing needs attention, send a short Telegram note saying no new important mail \u2014 or skip notify if truly empty and say so in your reply."
+    },
+    {
+      "name": "news_digest",
+      "enabled": false,
+      "handler": "news_digest",
+      "every_seconds": 3600,
+      "initial_delay_seconds": 20
+    },
+    {
+      "name": "reminders",
+      "enabled": true,
+      "handler": "reminders",
+      "every_seconds": 300,
+      "initial_delay_seconds": 45
+    }
+  ]
+}
