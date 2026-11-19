@@ -1,15 +1,34 @@
-const state = { sessionId: null, settings: null };
+const state = { sessionId: null, settings: null, user: null, isAdmin: false };
 
 const $ = (id) => document.getElementById(id);
 
 function show(panel) {
+  if ((panel === "models" || panel === "appconfig") && !state.isAdmin) {
+    panel = "talk";
+  }
   document.querySelectorAll(".panel").forEach((node) => node.classList.remove("visible"));
   document.querySelectorAll(".nav").forEach((node) => node.classList.toggle("active", node.dataset.panel === panel));
   $(panel).classList.add("visible");
   if (panel === "schedules") loadSchedules();
   if (panel === "models") loadSettings();
+  if (panel === "appconfig") loadAppConfig();
   if (panel === "email") loadEmail();
   if (panel === "usage") loadUsage();
+}
+
+function applyRoleUI(user) {
+  state.user = user || null;
+  state.isAdmin = Boolean(user && user.is_admin);
+  document.querySelectorAll(".admin-only").forEach((node) => {
+    node.hidden = !state.isAdmin;
+  });
+  const brandModel = $("brand-model");
+  if (brandModel && state.settings) {
+    const quota = state.settings.quota;
+    if (quota && quota.limit != null) {
+      brandModel.title = `Questions today: ${quota.used || 0}/${quota.limit}`;
+    }
+  }
 }
 
 document.querySelectorAll(".nav").forEach((button) => {
@@ -17,12 +36,17 @@ document.querySelectorAll(".nav").forEach((button) => {
 });
 
 async function api(path, options = {}) {
-  const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
+  const { skipAuthRedirect = false, ...fetchOptions } = options;
+  const headers = { "Content-Type": "application/json", ...(fetchOptions.headers || {}) };
   const token = localStorage.getItem("knics_token");
   if (token) headers.Authorization = `Bearer ${token}`;
-  const response = await fetch(path, { ...options, headers });
+  const response = await fetch(path, { ...fetchOptions, headers });
   const data = await response.json().catch(() => ({}));
-  if (response.status === 401 && !path.startsWith("/api/auth/")) {
+  if (
+    response.status === 401 &&
+    !skipAuthRedirect &&
+    !path.startsWith("/api/auth/")
+  ) {
     localStorage.removeItem("knics_token");
     showGate();
   }
@@ -33,51 +57,67 @@ async function api(path, options = {}) {
       : typeof detail === "string"
         ? detail
         : JSON.stringify(detail);
-    throw new Error(message);
+    throw new Error(message || "Request failed");
   }
   return data;
 }
 
 function showGate() {
-  $("shell").hidden = true;
-  $("gate").hidden = false;
+  document.body.classList.remove("authed");
+  const slot = $("google-login");
+  if (slot) slot.dataset.ready = "";
   mountGoogleLogin();
 }
 
 function loadGoogleScript() {
-  if (window.google?.accounts?.id) return Promise.resolve();
+  if (window.google && window.google.accounts && window.google.accounts.id) {
+    return Promise.resolve();
+  }
   if (window.__knicsGoogleScript) return window.__knicsGoogleScript;
   window.__knicsGoogleScript = new Promise((resolve, reject) => {
     const script = document.createElement("script");
     script.src = "https://accounts.google.com/gsi/client";
     script.async = true;
     script.onload = () => resolve();
-    script.onerror = () => reject(new Error("Could not load Google Sign-In. Check the connection and refresh."));
+    script.onerror = () =>
+      reject(new Error("Could not load Google Sign-In. Check the connection and refresh."));
     document.head.appendChild(script);
   });
   return window.__knicsGoogleScript;
 }
 
 async function handleGoogleCredential(response) {
-  $("login-status").textContent = "Signing in…";
+  const status = $("login-status");
+  if (status) status.textContent = "Signing in…";
   try {
+    const credential = response && response.credential;
+    if (!credential) {
+      throw new Error("Google did not return a sign-in credential. Try again.");
+    }
     const data = await api("/api/auth/google", {
       method: "POST",
-      body: JSON.stringify({ credential: response.credential }),
+      body: JSON.stringify({ credential }),
     });
+    if (!data.token) {
+      throw new Error("Sign-in succeeded at Google, but no session token was returned.");
+    }
     localStorage.setItem("knics_token", data.token);
-    $("login-status").textContent = "";
+    if (status) status.textContent = "";
     showApp(data);
   } catch (error) {
-    $("login-status").textContent = error.message;
+    if (status) status.textContent = error.message || "Sign-in failed.";
   }
 }
+
+// GIS looks up the callback by name when the popup closes; keep a stable global.
+window.handleGoogleCredential = handleGoogleCredential;
 
 function mountGoogleLogin() {
   const slot = $("google-login");
   if (!slot || slot.dataset.ready === "1") return;
   slot.dataset.ready = "1";
-  $("login-status").textContent = "";
+  const status = $("login-status");
+  if (status) status.textContent = "";
 
   fetch("/api/auth/google")
     .then(async (response) => {
@@ -93,9 +133,12 @@ function mountGoogleLogin() {
       await loadGoogleScript();
       window.google.accounts.id.initialize({
         client_id: data.client_id,
-        callback: handleGoogleCredential,
+        callback: window.handleGoogleCredential,
         auto_select: false,
         cancel_on_tap_outside: true,
+        ux_mode: "popup",
+        use_fedcm_for_prompt: false,
+        use_fedcm_for_button: false,
       });
       slot.replaceChildren();
       window.google.accounts.id.renderButton(slot, {
@@ -110,7 +153,7 @@ function mountGoogleLogin() {
     })
     .catch((error) => {
       slot.dataset.ready = "";
-      $("login-status").textContent = error.message;
+      if (status) status.textContent = error.message;
     });
 }
 
@@ -126,15 +169,30 @@ function userLabel(user) {
 }
 
 function showApp(me) {
-  $("gate").hidden = true;
-  $("shell").hidden = false;
-  const label = userLabel(me?.user);
+  document.body.classList.add("authed");
+  applyRoleUI(me && me.user);
+  const label = userLabel(me && me.user);
   const brandUser = $("brand-user");
-  brandUser.textContent = label;
-  brandUser.title = label;
-  loadSettings().catch((error) => {
-    $("brand-model").textContent = error.message;
-  });
+  if (brandUser) {
+    brandUser.textContent = label;
+    brandUser.title = label;
+  }
+  // Do not bounce back to the gate if model settings fail after a fresh login.
+  api("/api/settings", { skipAuthRedirect: true })
+    .then((settings) => {
+      state.settings = settings;
+      if (settings.is_admin) state.isAdmin = true;
+      applyRoleUI({ ...(me && me.user), is_admin: state.isAdmin });
+      const brandModel = $("brand-model");
+      if (brandModel) {
+        brandModel.textContent = `${settings.provider} · ${settings.model_id}`;
+      }
+      if (state.isAdmin) fillModels();
+    })
+    .catch((error) => {
+      const brandModel = $("brand-model");
+      if (brandModel) brandModel.textContent = error.message;
+    });
 }
 
 function escapeHtml(value) {
@@ -554,6 +612,65 @@ $("email-form").addEventListener("submit", async (event) => {
     $("email-status").textContent = saved.password_set ? "Saved" : "Saved without a password";
   } catch (error) {
     $("email-status").textContent = error.message;
+  }
+});
+
+async function loadAppConfig() {
+  if (!state.isAdmin) return;
+  const data = await api("/api/admin/config");
+  const form = $("appconfig-form");
+  form.replaceChildren();
+  (data.items || []).forEach((item) => {
+    const label = document.createElement("label");
+    label.className = item.key.startsWith("MAX_") || item.key.includes("MODEL") || item.key.includes("PROVIDER")
+      ? "wide"
+      : "wide";
+    const title = document.createElement("span");
+    title.textContent = item.key;
+    const input = document.createElement("input");
+    input.name = item.key;
+    input.dataset.secret = item.secret;
+    if (item.secret === "1") {
+      input.type = "password";
+      input.autocomplete = "new-password";
+      input.placeholder = item.set === "1" ? "•••••••• (leave blank to keep)" : "Enter secret";
+      input.value = "";
+    } else {
+      input.type = "text";
+      input.value = item.value || "";
+    }
+    label.append(title, input);
+    form.append(label);
+  });
+  const actions = document.createElement("div");
+  actions.className = "form-actions";
+  const button = document.createElement("button");
+  button.type = "submit";
+  button.textContent = "Save configuration";
+  actions.append(button);
+  form.append(actions);
+  $("appconfig-status").textContent = "";
+}
+
+$("appconfig-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!state.isAdmin) return;
+  const form = event.currentTarget;
+  const values = {};
+  Array.from(form.elements).forEach((el) => {
+    if (!el.name) return;
+    values[el.name] = el.value;
+  });
+  $("appconfig-status").textContent = "Saving…";
+  try {
+    await api("/api/admin/config", {
+      method: "PUT",
+      body: JSON.stringify({ values }),
+    });
+    $("appconfig-status").textContent = "Saved";
+    await loadAppConfig();
+  } catch (error) {
+    $("appconfig-status").textContent = error.message;
   }
 });
 

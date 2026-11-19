@@ -1,36 +1,25 @@
-"""Per-user profiles, Google Sign-In, Telegram channel links, email, and schedules."""
+"""Per-user profiles, Google Sign-In, Telegram links, email, and schedules (Postgres)."""
 
 from __future__ import annotations
 
 import hashlib
 import hmac
-import json
 import os
 import re
 import secrets
-import shutil
 import threading
 import time
-from pathlib import Path
+from datetime import datetime, timezone
 from typing import Any
 
 from user_scope import current_user_id
 
-ROOT = Path(__file__).resolve().parent
-DATA_ROOT = Path(os.environ.get("KNICS_DATA_DIR", ROOT / "data"))
-USERS_DIR = DATA_ROOT / "users"
-INDEX_PATH = DATA_ROOT / "users.json"
-SESSIONS_PATH = DATA_ROOT / "sessions.json"
-LEGACY_MEMORY = ROOT / "memory"
-LEGACY_SCHEDULES = ROOT / "config" / "schedules.json"
+import db
 
 _LOCK = threading.Lock()
 _OTP: dict[str, dict[str, Any]] = {}
-_SESSIONS: dict[str, dict[str, Any]] = {}
-_SESSIONS_LOADED = False
 
-# Telegram numeric ids, or Google ids as g_<sub>
-_USER_ID_RE = re.compile(r"^(?:[0-9]{1,20}|g_[a-zA-Z0-9_-]{1,60})$")
+_USER_ID_RE = re.compile(r"^(?:[0-9]{1,20}|g_[a-zA-Z0-9_-]{1,200}|_system)$")
 _OTP_TTL = 300
 _OTP_ATTEMPTS = 5
 _OTP_COOLDOWN = 30
@@ -62,6 +51,20 @@ _DEFAULT_JOBS = [
     },
 ]
 
+_USER_COLS = (
+    "user_id",
+    "chat_id",
+    "phone",
+    "email",
+    "picture",
+    "name",
+    "username",
+    "auth_provider",
+    "google_sub",
+    "provider",
+    "model_id",
+)
+
 
 def normalize_phone(phone: str) -> str:
     digits = re.sub(r"\D", "", phone or "")
@@ -73,7 +76,6 @@ def normalize_phone(phone: str) -> str:
 
 
 def phone_from_text(text: str) -> str:
-    """Return digits when the whole message is a phone number, ignoring spaces and punctuation."""
     stripped = (text or "").strip()
     if not stripped or re.search(r"[A-Za-z]", stripped):
         return ""
@@ -92,82 +94,23 @@ def _safe_user_id(user_id: str) -> str:
 
 def _google_user_id(sub: str) -> str:
     sub = str(sub or "").strip()
-    if not re.fullmatch(r"[a-zA-Z0-9_-]{1,60}", sub):
+    if not re.fullmatch(r"[a-zA-Z0-9_-]{1,200}", sub):
         digest = hashlib.sha256(sub.encode("utf-8")).hexdigest()[:40]
         return f"g_{digest}"
     return f"g_{sub}"
 
 
-def user_dir(user_id: str) -> Path:
-    return USERS_DIR / _safe_user_id(user_id)
-
-
-def memory_dir(user_id: str) -> Path:
-    path = user_dir(user_id) / "memory"
-    path.mkdir(parents=True, exist_ok=True)
-    return path
-
-
-def _blank_index() -> dict[str, Any]:
-    return {"users": {}, "phones": {}, "emails": {}}
-
-
-def _load_index() -> dict[str, Any]:
-    if not INDEX_PATH.exists():
-        return _blank_index()
-    try:
-        data = json.loads(INDEX_PATH.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return _blank_index()
-    if not isinstance(data, dict):
-        return _blank_index()
-    data.setdefault("users", {})
-    data.setdefault("phones", {})
-    data.setdefault("emails", {})
-    return data
-
-
-def _save_index(data: dict[str, Any]) -> None:
-    DATA_ROOT.mkdir(parents=True, exist_ok=True)
-    INDEX_PATH.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-
-
-def _load_sessions() -> None:
-    global _SESSIONS_LOADED
-    if _SESSIONS_LOADED:
-        return
-    _SESSIONS_LOADED = True
-    if not SESSIONS_PATH.exists():
-        return
-    try:
-        data = json.loads(SESSIONS_PATH.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return
-    now = time.time()
-    for token, rec in (data.get("sessions") or {}).items():
-        if isinstance(rec, dict) and float(rec.get("exp") or 0) > now:
-            _SESSIONS[str(token)] = rec
-
-
-def _save_sessions() -> None:
-    DATA_ROOT.mkdir(parents=True, exist_ok=True)
-    now = time.time()
-    kept = {
-        token: rec
-        for token, rec in _SESSIONS.items()
-        if float(rec.get("exp") or 0) > now
-    }
-    _SESSIONS.clear()
-    _SESSIONS.update(kept)
-    SESSIONS_PATH.write_text(
-        json.dumps({"sessions": kept}, indent=2) + "\n",
-        encoding="utf-8",
-    )
+def memory_dir(user_id: str) -> str:
+    """Compatibility shim; memory now lives in Postgres."""
+    return f"db://claw/memory/{_safe_user_id(user_id)}"
 
 
 def list_user_ids() -> list[str]:
-    with _LOCK:
-        return list(_load_index().get("users") or {})
+    rows = db.fetch_all(
+        "SELECT user_id FROM users WHERE user_id <> %s ORDER BY user_id",
+        (db.SYSTEM_USER_ID,),
+    )
+    return [str(row["user_id"]) for row in rows]
 
 
 def get_user(user_id: str) -> dict[str, Any] | None:
@@ -175,9 +118,17 @@ def get_user(user_id: str) -> dict[str, Any] | None:
         user_id = _safe_user_id(user_id)
     except ValueError:
         return None
-    with _LOCK:
-        user = (_load_index().get("users") or {}).get(user_id)
-        return dict(user) if isinstance(user, dict) else None
+    row = db.fetch_one("SELECT * FROM users WHERE user_id = %s", (user_id,))
+    return dict(row) if row else None
+
+
+def normalize_role(role: str | None) -> str:
+    role = str(role or "user").strip().lower()
+    return role if role in {"user", "admin"} else "user"
+
+
+def is_admin(user: dict[str, Any] | None) -> bool:
+    return normalize_role((user or {}).get("role")) == "admin"
 
 
 def public_user(user: dict[str, Any]) -> dict[str, Any]:
@@ -185,6 +136,7 @@ def public_user(user: dict[str, Any]) -> dict[str, Any]:
     masked = phone
     if len(phone) > 4:
         masked = "•" * (len(phone) - 4) + phone[-4:]
+    role = normalize_role(user.get("role"))
     return {
         "user_id": user.get("user_id"),
         "name": user.get("name") or "",
@@ -193,57 +145,25 @@ def public_user(user: dict[str, Any]) -> dict[str, Any]:
         "picture": user.get("picture") or "",
         "phone": masked,
         "phone_linked": bool(phone),
-        "auth_provider": user.get("auth_provider") or (
-            "google" if str(user.get("user_id") or "").startswith("g_") else "telegram"
-        ),
+        "role": role,
+        "is_admin": role == "admin",
+        "auth_provider": user.get("auth_provider")
+        or ("google" if str(user.get("user_id") or "").startswith("g_") else "telegram"),
     }
 
 
-def _should_import_legacy(user_id: str, chat_id: str) -> bool:
-    """Move the old single-user files once, only to the account named in the env."""
-    if (DATA_ROOT / ".legacy_imported").exists():
-        return False
-    owner = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
-    return bool(owner) and owner in {str(user_id), str(chat_id)}
-
-
-def _copy_legacy(user_id: str) -> None:
-    dest = memory_dir(user_id)
-    if LEGACY_MEMORY.exists():
-        for name in (
-            "MEMORY.md",
-            "reminders.json",
-            "reminder_sent.json",
-            "news_sent.json",
-            "journal.jsonl",
-        ):
-            src = LEGACY_MEMORY / name
-            target = dest / name
-            if src.is_file() and not target.exists():
-                shutil.copy2(src, target)
-        notes = LEGACY_MEMORY / "notes"
-        if notes.is_dir():
-            dest_notes = dest / "notes"
-            dest_notes.mkdir(parents=True, exist_ok=True)
-            for path in notes.glob("*.md"):
-                target = dest_notes / path.name
-                if not target.exists():
-                    shutil.copy2(path, target)
-    schedules = user_dir(user_id) / "schedules.json"
-    if LEGACY_SCHEDULES.is_file() and not schedules.exists():
-        user_dir(user_id).mkdir(parents=True, exist_ok=True)
-        shutil.copy2(LEGACY_SCHEDULES, schedules)
-    (DATA_ROOT / ".legacy_imported").write_text(user_id, encoding="utf-8")
-
-
-def _provision(user_id: str, *, import_legacy: bool) -> None:
-    user_dir(user_id).mkdir(parents=True, exist_ok=True)
-    memory_dir(user_id)
-    if import_legacy and not (DATA_ROOT / ".legacy_imported").exists():
-        _copy_legacy(user_id)
-    path = user_dir(user_id) / "schedules.json"
-    if not path.exists():
+def _provision(user_id: str) -> None:
+    existing = load_user_schedules(user_id)
+    if not existing:
         save_user_schedules(user_id, [dict(job) for job in _DEFAULT_JOBS])
+    db.execute(
+        """
+        INSERT INTO memory_core (user_id, content)
+        VALUES (%s, %s)
+        ON CONFLICT (user_id) DO NOTHING
+        """,
+        (user_id, "# Agent memory\n\nDurable facts and preferences go here.\n"),
+    )
 
 
 def ensure_user(
@@ -256,41 +176,40 @@ def ensure_user(
 ) -> dict[str, Any]:
     user_id = _safe_user_id(user_id)
     chat_id = str(chat_id or "").strip()
-    created = False
-    with _LOCK:
-        data = _load_index()
-        users: dict[str, Any] = data["users"]
-        current = users.get(user_id)
-        if not isinstance(current, dict):
-            created = True
-            import_legacy = _should_import_legacy(user_id, chat_id)
-            current = {
-                "user_id": user_id,
-                "chat_id": chat_id,
-                "phone": "",
-                "email": "",
-                "picture": "",
-                "name": name or "",
-                "username": username or "",
-                "auth_provider": "telegram",
-                "provider": "",
-                "model_id": "",
-            }
-        else:
-            import_legacy = False
-            if private or not current.get("chat_id"):
-                current["chat_id"] = chat_id
-            if name:
-                current["name"] = name
-            if username:
-                current["username"] = username
-            current.setdefault("auth_provider", "telegram")
-        users[user_id] = current
-        _save_index(data)
-        profile = dict(current)
+    current = get_user(user_id)
+    created = current is None
     if created:
-        _provision(user_id, import_legacy=import_legacy)
-    return profile
+        db.execute(
+            """
+            INSERT INTO users (
+                user_id, chat_id, phone, email, picture, name, username,
+                auth_provider, google_sub, role, provider, model_id
+            ) VALUES (%s, %s, '', '', '', %s, %s, 'telegram', '', 'user', '', '')
+            """,
+            (user_id, chat_id, name or "", username or ""),
+        )
+        _provision(user_id)
+        return get_user(user_id) or {}
+
+    updates: list[str] = []
+    params: list[Any] = []
+    if private or not current.get("chat_id"):
+        updates.append("chat_id = %s")
+        params.append(chat_id)
+    if name:
+        updates.append("name = %s")
+        params.append(name)
+    if username:
+        updates.append("username = %s")
+        params.append(username)
+    if updates:
+        updates.append("updated_at = now()")
+        params.append(user_id)
+        db.execute(
+            f"UPDATE users SET {', '.join(updates)} WHERE user_id = %s",
+            tuple(params),
+        )
+    return get_user(user_id) or current
 
 
 def ensure_google_user(
@@ -304,74 +223,84 @@ def ensure_google_user(
     email = str(email or "").strip().lower()
     name = str(name or "").strip()
     picture = str(picture or "").strip()
-    created = False
-    with _LOCK:
-        data = _load_index()
-        users: dict[str, Any] = data["users"]
-        emails: dict[str, str] = data["emails"]
-        current = users.get(user_id)
-        if not isinstance(current, dict):
-            created = True
-            current = {
-                "user_id": user_id,
-                "chat_id": "",
-                "phone": "",
-                "email": email,
-                "picture": picture,
-                "name": name,
-                "username": email.split("@", 1)[0] if email else "",
-                "auth_provider": "google",
-                "google_sub": str(sub),
-                "provider": "",
-                "model_id": "",
-            }
-        else:
-            current["auth_provider"] = "google"
-            current["google_sub"] = str(sub)
-            if email:
-                previous = str(current.get("email") or "").strip().lower()
-                if previous and previous != email:
-                    emails.pop(previous, None)
-                current["email"] = email
-            if name:
-                current["name"] = name
-            if picture:
-                current["picture"] = picture
-            if email and not current.get("username"):
-                current["username"] = email.split("@", 1)[0]
-        if email:
-            owner = emails.get(email)
-            if owner and owner != user_id:
-                raise ValueError("That Google email is already linked to another account.")
-            emails[email] = user_id
-        users[user_id] = current
-        _save_index(data)
-        profile = dict(current)
+    current = get_user(user_id)
+    created = current is None
+
+    if email:
+        owner = db.fetch_one(
+            "SELECT user_id FROM users WHERE email = %s AND user_id <> %s",
+            (email, user_id),
+        )
+        if owner:
+            raise ValueError("That Google email is already linked to another account.")
+
     if created:
-        _provision(user_id, import_legacy=False)
-    return profile
+        db.execute(
+            """
+            INSERT INTO users (
+                user_id, chat_id, phone, email, picture, name, username,
+                auth_provider, google_sub, role, provider, model_id
+            ) VALUES (%s, '', '', %s, %s, %s, %s, 'google', %s, 'user', '', '')
+            """,
+            (
+                user_id,
+                email,
+                picture,
+                name,
+                email.split("@", 1)[0] if email else "",
+                str(sub),
+            ),
+        )
+        _provision(user_id)
+    else:
+        db.execute(
+            """
+            UPDATE users SET
+                auth_provider = 'google',
+                google_sub = %s,
+                email = CASE WHEN %s <> '' THEN %s ELSE email END,
+                picture = CASE WHEN %s <> '' THEN %s ELSE picture END,
+                name = CASE WHEN %s <> '' THEN %s ELSE name END,
+                username = CASE
+                    WHEN username = '' AND %s <> '' THEN split_part(%s, '@', 1)
+                    ELSE username
+                END,
+                updated_at = now()
+            WHERE user_id = %s
+            """,
+            (
+                str(sub),
+                email,
+                email,
+                picture,
+                picture,
+                name,
+                name,
+                email,
+                email,
+                user_id,
+            ),
+        )
+    return get_user(user_id) or {}
 
 
 def link_phone(user_id: str, phone: str) -> dict[str, Any]:
     user_id = _safe_user_id(user_id)
     phone = normalize_phone(phone)
-    with _LOCK:
-        data = _load_index()
-        users: dict[str, Any] = data["users"]
-        phones: dict[str, str] = data["phones"]
-        owner = phones.get(phone)
-        if owner and owner != user_id:
-            raise ValueError("That phone number is already linked to another account.")
-        user = users.get(user_id)
-        if not isinstance(user, dict):
-            raise LookupError("Telegram user is not registered yet.")
-        previous = str(user.get("phone") or "")
-        if previous and previous != phone:
-            phones.pop(previous, None)
-        user["phone"] = phone
-        phones[phone] = user_id
-        _save_index(data)
-        return dict(user)
+    owner = db.fetch_one(
+        "SELECT user_id FROM users WHERE phone = %s AND user_id <> %s",
+        (phone, user_id),
+    )
+    if owner:
+        raise ValueError("That phone number is already linked to another account.")
+    user = get_user(user_id)
+    if not user:
+        raise LookupError("Telegram user is not registered yet.")
+    db.execute(
+        "UPDATE users SET phone = %s, updated_at = now() WHERE user_id = %s",
+        (phone, user_id),
+    )
+    return get_user(user_id) or user
 
 
 def _same_phone(left: str, right: str) -> bool:
@@ -385,17 +314,13 @@ def _same_phone(left: str, right: str) -> bool:
 
 def find_by_phone(phone: str) -> dict[str, Any] | None:
     phone = normalize_phone(phone)
-    with _LOCK:
-        data = _load_index()
-        phones: dict[str, str] = data.get("phones") or {}
-        user_id = phones.get(phone)
-        if not user_id:
-            matches = [uid for stored, uid in phones.items() if _same_phone(str(stored), phone)]
-            user_id = matches[0] if len(set(matches)) == 1 else None
-        if not user_id:
-            return None
-        user = (data.get("users") or {}).get(user_id)
-        return dict(user) if isinstance(user, dict) else None
+    row = db.fetch_one("SELECT * FROM users WHERE phone = %s", (phone,))
+    if row:
+        return dict(row)
+    for user in db.fetch_all("SELECT * FROM users WHERE phone <> ''"):
+        if _same_phone(str(user.get("phone") or ""), phone):
+            return dict(user)
+    return None
 
 
 def request_otp(phone: str) -> None:
@@ -430,11 +355,10 @@ def request_otp(phone: str) -> None:
 
 
 def google_client_id() -> str:
-    return os.environ.get("GOOGLE_CLIENT_ID", "").strip()
+    return db.get_config("GOOGLE_CLIENT_ID")
 
 
 def login_with_google(credential: str) -> dict[str, Any]:
-    """Verify a Google Identity Services ID token and open a session."""
     client_id = google_client_id()
     if not client_id:
         raise RuntimeError("Google login is not configured. Set GOOGLE_CLIENT_ID.")
@@ -458,8 +382,12 @@ def login_with_google(credential: str) -> dict[str, Any]:
             client_id,
             clock_skew_in_seconds=60,
         )
-    except Exception as exc:  # noqa: BLE001 — surface as auth failure
-        raise PermissionError("Google login could not be verified.") from exc
+    except Exception as exc:  # noqa: BLE001
+        raise PermissionError(
+            f"Google login could not be verified ({exc.__class__.__name__}). "
+            "Check GOOGLE_CLIENT_ID matches the OAuth Web client and this origin "
+            "is listed under Authorized JavaScript origins."
+        ) from exc
 
     issuer = str(info.get("iss") or "")
     if issuer not in {"accounts.google.com", "https://accounts.google.com"}:
@@ -482,7 +410,6 @@ def login_with_google(credential: str) -> dict[str, Any]:
 
 
 def login_with_telegram(payload: dict[str, Any]) -> dict[str, Any]:
-    """Accept the Login Widget payload after checking Telegram's signature."""
     from channels.telegram import TOKEN
 
     if not TOKEN:
@@ -569,18 +496,18 @@ def verify_otp(phone: str, code: str) -> dict[str, Any]:
 def create_session(user_id: str) -> str:
     user_id = _safe_user_id(user_id)
     token = secrets.token_urlsafe(32)
-    with _LOCK:
-        _load_sessions()
-        _SESSIONS[token] = {"user_id": user_id, "exp": time.time() + _SESSION_TTL}
-        _save_sessions()
+    exp = datetime.fromtimestamp(time.time() + _SESSION_TTL, tz=timezone.utc)
+    db.execute(
+        "INSERT INTO sessions (token, user_id, exp) VALUES (%s, %s, %s)",
+        (token, user_id, exp),
+    )
     return token
 
 
 def drop_session(token: str) -> None:
-    with _LOCK:
-        _load_sessions()
-        _SESSIONS.pop(token or "", None)
-        _save_sessions()
+    if not token:
+        return
+    db.execute("DELETE FROM sessions WHERE token = %s", (token,))
 
 
 def user_from_authorization(header: str | None) -> dict[str, Any] | None:
@@ -589,14 +516,22 @@ def user_from_authorization(header: str | None) -> dict[str, Any] | None:
     scheme, _, token = header.partition(" ")
     if scheme.lower() != "bearer" or not token.strip():
         return None
-    with _LOCK:
-        _load_sessions()
-        rec = _SESSIONS.get(token.strip())
-        if not rec or float(rec.get("exp") or 0) < time.time():
-            _SESSIONS.pop(token.strip(), None)
-            return None
-        user_id = str(rec.get("user_id") or "")
-    return get_user(user_id)
+    token = token.strip()
+    row = db.fetch_one(
+        "SELECT user_id, exp FROM sessions WHERE token = %s",
+        (token,),
+    )
+    if not row:
+        return None
+    exp = row["exp"]
+    if hasattr(exp, "timestamp"):
+        exp_ts = exp.timestamp()
+    else:
+        exp_ts = float(exp)
+    if exp_ts < time.time():
+        db.execute("DELETE FROM sessions WHERE token = %s", (token,))
+        return None
+    return get_user(str(row["user_id"]))
 
 
 def bearer_token(header: str | None) -> str:
@@ -621,29 +556,21 @@ def model_selection(user_id: str) -> dict[str, str] | None:
 
 def save_model_selection(user_id: str, provider: str, model_id: str) -> None:
     user_id = _safe_user_id(user_id)
-    with _LOCK:
-        data = _load_index()
-        user = (data.get("users") or {}).get(user_id)
-        if not isinstance(user, dict):
-            raise LookupError("Unknown user.")
-        user["provider"] = provider
-        user["model_id"] = model_id
-        _save_index(data)
-
-
-def _email_path(user_id: str) -> Path:
-    return user_dir(user_id) / "email.json"
+    if not get_user(user_id):
+        raise LookupError("Unknown user.")
+    db.execute(
+        """
+        UPDATE users
+        SET provider = %s, model_id = %s, updated_at = now()
+        WHERE user_id = %s
+        """,
+        (provider, model_id, user_id),
+    )
 
 
 def _read_email(user_id: str) -> dict[str, Any]:
-    path = _email_path(user_id)
-    if not path.exists():
-        return {}
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-    return data if isinstance(data, dict) else {}
+    row = db.fetch_one("SELECT * FROM email_settings WHERE user_id = %s", (user_id,))
+    return dict(row) if row else {}
 
 
 def public_email(user_id: str) -> dict[str, Any]:
@@ -680,17 +607,21 @@ def save_email(user_id: str, fields: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("SMTP port must be a number.") from exc
     if not imap_server or not smtp_server or not (1 <= smtp_port <= 65535):
         raise ValueError("IMAP server, SMTP server, and port are required.")
-    stored = {
-        "email": email,
-        "app_password": password,
-        "imap_server": imap_server,
-        "smtp_server": smtp_server,
-        "smtp_port": smtp_port,
-        "news_to": news_to,
-    }
-    path = _email_path(user_id)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(stored, indent=2) + "\n", encoding="utf-8")
+    db.execute(
+        """
+        INSERT INTO email_settings (
+            user_id, email, app_password, imap_server, smtp_server, smtp_port, news_to
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (user_id) DO UPDATE SET
+            email = EXCLUDED.email,
+            app_password = EXCLUDED.app_password,
+            imap_server = EXCLUDED.imap_server,
+            smtp_server = EXCLUDED.smtp_server,
+            smtp_port = EXCLUDED.smtp_port,
+            news_to = EXCLUDED.news_to
+        """,
+        (user_id, email, password, imap_server, smtp_server, smtp_port, news_to),
+    )
     return public_email(user_id)
 
 
@@ -713,7 +644,6 @@ def news_recipient(user_id: str | None = None) -> str:
 
 
 def chat_for_send(requested: str | None) -> tuple[str, str | None]:
-    """Return the chat a send is allowed to use, or an error message."""
     from user_scope import current_reply_chat
 
     uid = current_user_id()
@@ -731,27 +661,153 @@ def chat_for_send(requested: str | None) -> tuple[str, str | None]:
         return target, None
     if not requested:
         return "", "No Telegram chat is available for this account."
-    with _LOCK:
-        users = _load_index().get("users") or {}
-    for user in users.values():
-        if isinstance(user, dict) and str(user.get("chat_id") or "") == requested:
-            return requested, None
+    row = db.fetch_one(
+        "SELECT chat_id FROM users WHERE chat_id = %s LIMIT 1",
+        (requested,),
+    )
+    if row:
+        return requested, None
     return "", "Unknown Telegram chat."
 
 
 def load_user_schedules(user_id: str) -> list[dict[str, Any]]:
-    path = user_dir(user_id) / "schedules.json"
-    if not path.exists():
-        return []
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return []
-    jobs = data.get("jobs", data if isinstance(data, list) else [])
-    return [job for job in jobs if isinstance(job, dict)]
+    user_id = _safe_user_id(user_id)
+    rows = db.fetch_all(
+        """
+        SELECT name, every_seconds, enabled, handler, prompt, initial_delay_seconds
+        FROM schedules
+        WHERE user_id = %s
+        ORDER BY name
+        """,
+        (user_id,),
+    )
+    jobs: list[dict[str, Any]] = []
+    for row in rows:
+        jobs.append(
+            {
+                "name": row["name"],
+                "every_seconds": int(row["every_seconds"]),
+                "enabled": bool(row["enabled"]),
+                "handler": row["handler"] or "",
+                "prompt": row["prompt"] or "",
+                "initial_delay_seconds": int(row["initial_delay_seconds"] or 5),
+            }
+        )
+    return jobs
+
+
+def estimate_tokens(text: str) -> int:
+    """Rough token estimate (~4 chars/token) for request gating."""
+    text = text or ""
+    if not text:
+        return 0
+    return max(1, (len(text) + 3) // 4)
+
+
+def questions_today(user_id: str) -> int:
+    user_id = _safe_user_id(user_id)
+    row = db.fetch_one(
+        """
+        SELECT questions FROM daily_usage
+        WHERE user_id = %s AND day = CURRENT_DATE
+        """,
+        (user_id,),
+    )
+    return int((row or {}).get("questions") or 0)
+
+
+def record_question(user_id: str) -> int:
+    user_id = _safe_user_id(user_id)
+    db.execute(
+        """
+        INSERT INTO daily_usage (user_id, day, questions)
+        VALUES (%s, CURRENT_DATE, 1)
+        ON CONFLICT (user_id, day) DO UPDATE
+        SET questions = daily_usage.questions + 1
+        """,
+        (user_id,),
+    )
+    return questions_today(user_id)
+
+
+def check_question_quota(user_id: str) -> dict[str, Any]:
+    """Raise ValueError if the user is over the daily question limit. Admins are unlimited."""
+    profile = get_user(user_id) or {}
+    if is_admin(profile):
+        return {
+            "limited": False,
+            "used": questions_today(user_id),
+            "limit": None,
+            "remaining": None,
+        }
+    limit = db.get_config_int("MAX_QUESTIONS_PER_DAY", 10)
+    used = questions_today(user_id)
+    if used >= limit:
+        raise ValueError(
+            f"Daily question limit reached ({used}/{limit}). Try again tomorrow."
+        )
+    return {
+        "limited": True,
+        "used": used,
+        "limit": limit,
+        "remaining": max(0, limit - used),
+    }
+
+
+def enforce_input_token_limit(message: str) -> int:
+    max_tokens = db.get_config_int("MAX_INPUT_TOKENS", 2000)
+    estimated = estimate_tokens(message)
+    if estimated > max_tokens:
+        raise ValueError(
+            f"Message too long ({estimated} tokens). Max input tokens is {max_tokens}."
+        )
+    return estimated
+
+
+def set_user_role(email_or_id: str, role: str = "admin") -> dict[str, Any]:
+    role = normalize_role(role)
+    key = str(email_or_id or "").strip()
+    if not key:
+        raise ValueError("email or user_id is required")
+    row = db.fetch_one(
+        "SELECT user_id FROM users WHERE email = %s OR user_id = %s",
+        (key.lower(), key),
+    )
+    if not row:
+        raise LookupError(f"No user found for {key!r}")
+    db.execute(
+        "UPDATE users SET role = %s, updated_at = now() WHERE user_id = %s",
+        (role, row["user_id"]),
+    )
+    return get_user(str(row["user_id"])) or {}
 
 
 def save_user_schedules(user_id: str, jobs: list[dict[str, Any]]) -> None:
-    path = user_dir(user_id) / "schedules.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"jobs": jobs}, indent=2) + "\n", encoding="utf-8")
+    user_id = _safe_user_id(user_id)
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM schedules WHERE user_id = %s", (user_id,))
+            for job in jobs:
+                if not isinstance(job, dict):
+                    continue
+                name = str(job.get("name") or "").strip()
+                if not name:
+                    continue
+                cur.execute(
+                    """
+                    INSERT INTO schedules (
+                        user_id, name, every_seconds, enabled, handler, prompt,
+                        initial_delay_seconds
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        user_id,
+                        name,
+                        int(job.get("every_seconds") or 3600),
+                        bool(job.get("enabled", True)),
+                        str(job.get("handler") or ""),
+                        str(job.get("prompt") or ""),
+                        int(job.get("initial_delay_seconds") or 5),
+                    ),
+                )
+        conn.commit()

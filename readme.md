@@ -1,12 +1,28 @@
+# Requires Python 3.12+
+# macOS: brew install python@3.12
+# then: python3.12 -m venv .venv && source .venv/bin/activate
+# Prefer: .venv/bin/python (avoid shell `python` aliases to 3.9)
+
+# Postgres (required)
+# DATABASE_URL=postgresql://...  in .env
+# On startup the app creates schema `claw` and stores:
+#   app_config, users, sessions, schedules, memory, reminders, news_sent, token_usage
+# Env keys from .env are synced into claw.app_config (new keys only; admin edits win)
+#
+# Roles: new users get role=user. Promote an admin with:
+#   .venv/bin/python scripts/set_admin.py you@example.com
+#   # or: psql "$DATABASE_URL" -f scripts/set_admin.sql
+# Admin UI: Models + App config (MAX_QUESTIONS_PER_DAY default 10, MAX_INPUT_TOKENS default 2000)
+
 # Console (local)
-python -m uvicorn api:app --reload --host 0.0.0.0 --port 8500
-# or: python main.py
+.venv/bin/python -m uvicorn api:app --reload --host 0.0.0.0 --port 8500
+# or: .venv/bin/python main.py
 Then open http://127.0.0.1:8500/
 
 # Vercel
 # Entry: main:app (see pyproject.toml [tool.vercel] + vercel.json)
 # Deploy: vercel --prod
-# Set env vars in the Vercel project (MODEL_PROVIDER, API keys, GOOGLE_CLIENT_ID, TELEGRAM_*, GMAIL_*, etc.)
+# Set DATABASE_URL + other env vars in the Vercel project
 
 # Google Sign-In (web console)
 # 1. Create an OAuth client (Web) in Google Cloud Console

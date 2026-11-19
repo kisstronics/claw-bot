@@ -1,28 +1,17 @@
 """
-Append-only token usage logger for Bedrock agent turns.
-
-Writes one line per turn to token-usage.log:
-  timestamp | model | input_tokens | output_tokens | total_tokens |
-  tools | rounds | duration_sec
+Append-only token usage logger for agent turns (Postgres claw.token_usage).
 """
 
 from __future__ import annotations
 
-import os
-import re
 from datetime import datetime, timezone
+from typing import Any
+
 from dotenv import load_dotenv
 
 load_dotenv()
-from pathlib import Path
-from typing import Any
 
-LOG_PATH = Path(
-    os.environ.get(
-        "TOKEN_USAGE_LOG",
-        Path(__file__).with_name("token-usage.log"),
-    )
-)
+import db
 
 
 def _ts() -> str:
@@ -47,9 +36,7 @@ def log_turn(
     rounds: int = 1,
     user_id: str = "",
 ) -> str:
-    """
-    Append a one-liner usage record. Returns the written line.
-    """
+    """Insert a usage record. Returns a display line."""
     total = int(input_tokens) + int(output_tokens)
     tools = ",".join(tools_used) if tools_used else "-"
     line = (
@@ -59,20 +46,27 @@ def log_turn(
         f"user={user_id or '-'} | "
         f"duration_sec={duration_sec:.3f}"
     )
-    LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with LOG_PATH.open("a", encoding="utf-8") as fh:
-        fh.write(line + "\n")
+    db.execute(
+        """
+        INSERT INTO token_usage (
+            model, input_tokens, output_tokens, total_tokens,
+            tools, rounds, user_id, duration_sec
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        """,
+        (
+            model_id,
+            int(input_tokens),
+            int(output_tokens),
+            total,
+            tools,
+            int(rounds),
+            user_id or None,
+            float(duration_sec),
+        ),
+    )
     return line
 
 
-_LINE_RE = re.compile(
-    r"^(?P<ts>.+?) \| model=(?P<model>.+?) \| input=(?P<input>\d+) \| "
-    r"output=(?P<output>\d+) \| total=(?P<total>\d+) \| tools=(?P<tools>.*?) \| "
-    r"rounds=(?P<rounds>\d+) \| (?:user=(?P<user>.*?) \| )?"
-    r"duration_sec=(?P<duration>[0-9.]+)\s*$"
-)
-
-# Rough USD per 1M tokens. Free-tier model ids ending in :free are treated as $0.
 _DEFAULT_PRICE = (1.0, 3.0)
 _PRICE_HINTS: list[tuple[str, tuple[float, float]]] = [
     (":free", (0.0, 0.0)),
@@ -80,6 +74,7 @@ _PRICE_HINTS: list[tuple[str, tuple[float, float]]] = [
     ("gpt-4o-mini", (0.15, 0.60)),
     ("haiku", (1.0, 5.0)),
     ("qwen", (0.20, 0.60)),
+    ("nemotron", (0.0, 0.0)),
 ]
 
 
@@ -97,51 +92,74 @@ def _cost(model_id: str, input_tokens: int, output_tokens: int) -> float:
 
 
 def read_usage(limit: int = 100, user_id: str | None = None) -> dict[str, Any]:
-    """Summarize recent turns from the usage log, with an estimated USD cost."""
+    """Summarize recent turns from Postgres, with an estimated USD cost."""
     limit = max(1, min(int(limit), 500))
-    if not LOG_PATH.exists():
-        return {
-            "turns": 0,
-            "input_tokens": 0,
-            "output_tokens": 0,
-            "total_tokens": 0,
-            "estimated_cost_usd": 0.0,
-            "avg_duration_sec": 0.0,
-            "recent": [],
-            "note": "Estimates use public list prices and are not an invoice.",
-        }
-    rows: list[dict[str, Any]] = []
-    for line in LOG_PATH.read_text(encoding="utf-8").splitlines():
-        match = _LINE_RE.match(line.strip())
-        if not match:
-            continue
-        model = match.group("model")
-        inp = int(match.group("input"))
-        out = int(match.group("output"))
-        rows.append(
+    if user_id:
+        rows_raw = db.fetch_all(
+            """
+            SELECT ts, model, input_tokens, output_tokens, total_tokens,
+                   tools, rounds, user_id, duration_sec
+            FROM token_usage
+            WHERE user_id = %s
+            ORDER BY ts DESC
+            LIMIT %s
+            """,
+            (user_id, limit),
+        )
+        all_raw = db.fetch_all(
+            """
+            SELECT model, input_tokens, output_tokens, duration_sec
+            FROM token_usage
+            WHERE user_id = %s
+            """,
+            (user_id,),
+        )
+    else:
+        rows_raw = db.fetch_all(
+            """
+            SELECT ts, model, input_tokens, output_tokens, total_tokens,
+                   tools, rounds, user_id, duration_sec
+            FROM token_usage
+            ORDER BY ts DESC
+            LIMIT %s
+            """,
+            (limit,),
+        )
+        all_raw = db.fetch_all(
+            "SELECT model, input_tokens, output_tokens, duration_sec FROM token_usage"
+        )
+
+    recent: list[dict[str, Any]] = []
+    for row in rows_raw:
+        model = str(row["model"])
+        inp = int(row["input_tokens"] or 0)
+        out = int(row["output_tokens"] or 0)
+        tools = str(row.get("tools") or "-")
+        ts = row["ts"]
+        recent.append(
             {
-                "ts": match.group("ts"),
+                "ts": ts.isoformat() if hasattr(ts, "isoformat") else str(ts),
                 "model": model,
                 "input_tokens": inp,
                 "output_tokens": out,
-                "total_tokens": int(match.group("total")),
-                "tools": [] if match.group("tools") == "-" else match.group("tools").split(","),
-                "rounds": int(match.group("rounds")),
-                "duration_sec": float(match.group("duration")),
-                "user": match.group("user") or "",
+                "total_tokens": int(row["total_tokens"] or inp + out),
+                "tools": [] if tools == "-" else tools.split(","),
+                "rounds": int(row["rounds"] or 1),
+                "duration_sec": float(row["duration_sec"] or 0),
+                "user": str(row.get("user_id") or ""),
                 "estimated_cost_usd": round(_cost(model, inp, out), 6),
             }
         )
-    if user_id:
-        rows = [row for row in rows if row.get("user") == user_id]
-    recent = rows[-limit:]
-    recent.reverse()
-    input_tokens = sum(row["input_tokens"] for row in rows)
-    output_tokens = sum(row["output_tokens"] for row in rows)
-    durations = [row["duration_sec"] for row in rows]
-    cost = sum(_cost(row["model"], row["input_tokens"], row["output_tokens"]) for row in rows)
+
+    input_tokens = sum(int(row["input_tokens"] or 0) for row in all_raw)
+    output_tokens = sum(int(row["output_tokens"] or 0) for row in all_raw)
+    durations = [float(row["duration_sec"] or 0) for row in all_raw]
+    cost = sum(
+        _cost(str(row["model"]), int(row["input_tokens"] or 0), int(row["output_tokens"] or 0))
+        for row in all_raw
+    )
     return {
-        "turns": len(rows),
+        "turns": len(all_raw),
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
         "total_tokens": input_tokens + output_tokens,

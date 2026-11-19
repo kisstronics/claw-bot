@@ -19,7 +19,7 @@
       <p id="login-status" class="status"></p>
     </div>
   </div>
-  <div class="app" id="shell" hidden>
+  <div class="app" id="shell">
     <aside>
       <div class="brand">
         <span class="mark">K</span>
@@ -32,7 +32,8 @@
       <nav>
         <button class="nav active" data-panel="talk">Talk</button>
         <button class="nav" data-panel="schedules">Schedules</button>
-        <button class="nav" data-panel="models">Models</button>
+        <button class="nav admin-only" data-panel="models" hidden>Models</button>
+        <button class="nav admin-only" data-panel="appconfig" hidden>App config</button>
         <button class="nav" data-panel="email">Email</button>
         <button class="nav" data-panel="usage">Usage</button>
       </nav>
@@ -108,6 +109,18 @@
             <span id="model-status" class="status"></span>
           </div>
         </form>
+      </section>
+
+      <section id="appconfig" class="panel">
+        <header class="panel-head">
+          <div>
+            <p class="eyebrow">Admin</p>
+            <h1>App configuration</h1>
+          </div>
+        </header>
+        <form id="appconfig-form" class="card form-grid"></form>
+        <p id="appconfig-status" class="status"></p>
+        <p class="note">These values are stored in Postgres schema <code>claw.app_config</code>. Leave secret fields blank to keep the current value.</p>
       </section>
 
       <section id="email" class="panel">

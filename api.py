@@ -6,11 +6,18 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
 import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
+
+if sys.version_info < (3, 12):
+    raise SystemExit(
+        f"Python 3.12+ is required (found {sys.version.split()[0]}). "
+        "Install 3.12+ and recreate your venv."
+    )
 
 from dotenv import load_dotenv
 
@@ -22,6 +29,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 import accounts
+import db
 import token_tracker
 from agents.news_agent import run_news_digest
 from agents.reminder import run_reminders
@@ -52,6 +60,13 @@ def _require_user() -> dict[str, Any]:
     if not profile:
         raise HTTPException(status_code=401, detail="Login required")
     return profile
+
+
+def _require_admin() -> dict[str, Any]:
+    user = _require_user()
+    if not accounts.is_admin(user):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return user
 
 
 def _scheduled_invoke(prompt: str) -> str:
@@ -91,6 +106,7 @@ def _run_update(update: dict[str, Any]) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _scheduler
+    db.init_db()
     _scheduler = SimpleScheduler(
         invoke=_scheduled_invoke,
         handlers={
@@ -103,6 +119,7 @@ async def lifespan(app: FastAPI):
     yield
     if _scheduler:
         _scheduler.stop()
+    db.close_pool()
 
 
 app = FastAPI(
@@ -135,7 +152,30 @@ class UserContextMiddleware:
             reset_user(token)
 
 
+class SecurityHeadersMiddleware:
+    """Allow Google Sign-In popup to return the credential to this origin."""
+
+    def __init__(self, app) -> None:
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+
+        async def send_with_headers(message):
+            if message["type"] == "http.response.start":
+                headers = list(message.get("headers") or [])
+                headers.append((b"cross-origin-opener-policy", b"same-origin-allow-popups"))
+                headers.append((b"referrer-policy", b"strict-origin-when-cross-origin"))
+                message = {**message, "headers": headers}
+            await send(message)
+
+        await self.app(scope, receive, send_with_headers)
+
+
 app.add_middleware(UserContextMiddleware)
+app.add_middleware(SecurityHeadersMiddleware)
 
 
 class InvokeRequest(BaseModel):
@@ -151,6 +191,10 @@ class GoogleLoginRequest(BaseModel):
 class SettingsUpdate(BaseModel):
     provider: str = Field(..., min_length=1)
     model_id: str = Field(..., min_length=1)
+
+
+class AppConfigUpdate(BaseModel):
+    values: dict[str, str] = Field(default_factory=dict)
 
 
 class EmailUpdate(BaseModel):
@@ -230,10 +274,17 @@ def google_login_config() -> dict[str, str]:
 @app.post("/api/auth/google")
 def google_login(body: GoogleLoginRequest) -> dict[str, Any]:
     try:
-        return accounts.login_with_google(body.credential)
+        result = accounts.login_with_google(body.credential)
+        logger.info(
+            "Google sign-in ok user_id=%s email=%s",
+            (result.get("user") or {}).get("user_id"),
+            (result.get("user") or {}).get("email"),
+        )
+        return result
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except PermissionError as exc:
+        logger.warning("Google sign-in rejected: %s", exc)
         raise HTTPException(status_code=401, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -254,6 +305,12 @@ def logout(request: Request) -> dict[str, str]:
 def invoke(req: InvokeRequest) -> dict[str, Any]:
     user = _require_user()
     user_id = str(user["user_id"])
+    try:
+        accounts.enforce_input_token_limit(req.message)
+        quota = accounts.check_question_quota(user_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+
     session_id = req.session_id or str(uuid4())
     bucket = _sessions.setdefault(user_id, {})
     if req.reset or session_id not in bucket:
@@ -265,6 +322,7 @@ def invoke(req: InvokeRequest) -> dict[str, Any]:
         if messages and messages[-1].get("role") == "user":
             messages.pop()
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+    used = accounts.record_question(user_id)
     current = active_selection()
     return {
         "session_id": session_id,
@@ -272,6 +330,13 @@ def invoke(req: InvokeRequest) -> dict[str, Any]:
         "provider": current["provider"],
         "model": current["model_id"],
         "region": current["region"],
+        "quota": {
+            **quota,
+            "used": used,
+            "remaining": None
+            if quota.get("limit") is None
+            else max(0, int(quota["limit"]) - used),
+        },
     }
 
 
@@ -285,22 +350,55 @@ def delete_session(session_id: str) -> dict[str, str]:
 
 @app.get("/api/settings")
 def read_settings() -> dict[str, Any]:
-    _require_user()
+    user = _require_user()
     current = active_selection()
     catalog = {
         provider: list(dict.fromkeys(models))
         for provider, models in MODEL_CATALOG.items()
     }
-    return {**current, "catalog": catalog}
+    return {
+        **current,
+        "catalog": catalog,
+        "is_admin": accounts.is_admin(user),
+        "quota": {
+            "used": accounts.questions_today(str(user["user_id"])),
+            "limit": None
+            if accounts.is_admin(user)
+            else db.get_config_int("MAX_QUESTIONS_PER_DAY", 10),
+            "max_input_tokens": db.get_config_int("MAX_INPUT_TOKENS", 2000),
+        },
+    }
 
 
 @app.put("/api/settings")
 def write_settings(body: SettingsUpdate) -> dict[str, str]:
-    _require_user()
+    _require_admin()
     try:
         return apply_runtime_settings(body.provider, body.model_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/admin/config")
+def read_app_config() -> dict[str, Any]:
+    _require_admin()
+    return {"items": db.list_app_config(mask_secrets=True)}
+
+
+@app.put("/api/admin/config")
+def write_app_config(body: AppConfigUpdate) -> dict[str, Any]:
+    _require_admin()
+    updated: list[str] = []
+    for key, value in (body.values or {}).items():
+        key = str(key or "").strip()
+        if key not in db.ADMIN_CONFIG_KEYS:
+            raise HTTPException(status_code=400, detail=f"Unknown config key: {key}")
+        # Skip blank secret fields so masked placeholders do not wipe keys.
+        if key in db.SECRET_CONFIG_KEYS and str(value or "").strip() == "":
+            continue
+        db.set_config(key, str(value if value is not None else ""))
+        updated.append(key)
+    return {"ok": True, "updated": updated, "items": db.list_app_config(mask_secrets=True)}
 
 
 @app.get("/api/usage")
