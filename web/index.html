@@ -32,6 +32,8 @@
       <nav>
         <button class="nav active" data-panel="talk">Talk</button>
         <button class="nav" data-panel="schedules">Schedules</button>
+        <button class="nav admin-only" data-panel="dashboard" hidden>Dashboard</button>
+        <button class="nav admin-only" data-panel="users" hidden>Users</button>
         <button class="nav admin-only" data-panel="models" hidden>Models</button>
         <button class="nav admin-only" data-panel="appconfig" hidden>App config</button>
         <button class="nav" data-panel="email">Email</button>
@@ -85,6 +87,78 @@
           </div>
         </form>
         <div id="schedule-list" class="stack"></div>
+      </section>
+
+      <section id="dashboard" class="panel">
+        <header class="panel-head">
+          <div>
+            <p class="eyebrow">Admin</p>
+            <h1>Dashboard</h1>
+          </div>
+          <button id="refresh-dashboard" class="ghost" type="button">Refresh</button>
+        </header>
+        <div id="dashboard-cards" class="stats"></div>
+        <p class="note">User counts exclude the internal system account.</p>
+      </section>
+
+      <section id="users" class="panel">
+        <header class="panel-head">
+          <div>
+            <p class="eyebrow">Admin</p>
+            <h1>Users</h1>
+          </div>
+        </header>
+        <form id="users-filter" class="card form-grid">
+          <label class="wide">Search
+            <input name="q" placeholder="Name, email, username, or id" />
+          </label>
+          <label>Role
+            <select name="role">
+              <option value="">All roles</option>
+              <option value="user">user</option>
+              <option value="admin">admin</option>
+            </select>
+          </label>
+          <label>Sort
+            <select name="sort">
+              <option value="created_at">Created</option>
+              <option value="updated_at">Updated</option>
+              <option value="name">Name</option>
+              <option value="email">Email</option>
+              <option value="role">Role</option>
+            </select>
+          </label>
+          <label>Order
+            <select name="order">
+              <option value="desc">Descending</option>
+              <option value="asc">Ascending</option>
+            </select>
+          </label>
+          <div class="form-actions">
+            <button type="submit">Apply</button>
+            <span id="users-meta" class="status"></span>
+          </div>
+        </form>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Email</th>
+                <th>Role</th>
+                <th>Auth</th>
+                <th>Created</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="users-rows"></tbody>
+          </table>
+        </div>
+        <div class="pager">
+          <button type="button" id="users-prev" class="ghost">Previous</button>
+          <span id="users-page" class="note"></span>
+          <button type="button" id="users-next" class="ghost">Next</button>
+        </div>
       </section>
 
       <section id="models" class="panel">

@@ -1,15 +1,24 @@
-const state = { sessionId: null, settings: null, user: null, isAdmin: false };
+const state = {
+  sessionId: null,
+  settings: null,
+  user: null,
+  isAdmin: false,
+  users: { page: 1, page_size: 20, q: "", role: "", sort: "created_at", order: "desc" },
+};
 
 const $ = (id) => document.getElementById(id);
 
 function show(panel) {
-  if ((panel === "models" || panel === "appconfig") && !state.isAdmin) {
+  const adminPanels = new Set(["dashboard", "users", "models", "appconfig"]);
+  if (adminPanels.has(panel) && !state.isAdmin) {
     panel = "talk";
   }
   document.querySelectorAll(".panel").forEach((node) => node.classList.remove("visible"));
   document.querySelectorAll(".nav").forEach((node) => node.classList.toggle("active", node.dataset.panel === panel));
   $(panel).classList.add("visible");
   if (panel === "schedules") loadSchedules();
+  if (panel === "dashboard") loadDashboard();
+  if (panel === "users") loadUsers();
   if (panel === "models") loadSettings();
   if (panel === "appconfig") loadAppConfig();
   if (panel === "email") loadEmail();
@@ -613,6 +622,126 @@ $("email-form").addEventListener("submit", async (event) => {
   } catch (error) {
     $("email-status").textContent = error.message;
   }
+});
+
+async function loadDashboard() {
+  if (!state.isAdmin) return;
+  const data = await api("/api/admin/dashboard");
+  const cards = [
+    ["Total users", data.total_users],
+    ["Admins", data.admin_users],
+    ["Regular users", data.regular_users],
+    ["New today", data.new_today],
+    ["New (7 days)", data.new_7d],
+    ["Questions today", data.questions_today],
+  ];
+  $("dashboard-cards").innerHTML = cards
+    .map(([label, value]) => `<article class="stat"><b>${Number(value || 0).toLocaleString()}</b><span>${label}</span></article>`)
+    .join("");
+}
+
+$("refresh-dashboard").addEventListener("click", () => {
+  loadDashboard().catch((error) => {
+    $("dashboard-cards").innerHTML = `<p class="status">${escapeHtml(error.message)}</p>`;
+  });
+});
+
+function formatWhen(value) {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleString();
+}
+
+async function loadUsers() {
+  if (!state.isAdmin) return;
+  const form = $("users-filter");
+  if (form) {
+    form.q.value = state.users.q || "";
+    form.role.value = state.users.role || "";
+    form.sort.value = state.users.sort || "created_at";
+    form.order.value = state.users.order || "desc";
+  }
+  const params = new URLSearchParams({
+    q: state.users.q || "",
+    role: state.users.role || "",
+    sort: state.users.sort || "created_at",
+    order: state.users.order || "desc",
+    page: String(state.users.page || 1),
+    page_size: String(state.users.page_size || 20),
+  });
+  const data = await api(`/api/admin/users?${params.toString()}`);
+  state.users.page = data.page;
+  const rows = $("users-rows");
+  rows.replaceChildren();
+  (data.items || []).forEach((user) => {
+    const tr = document.createElement("tr");
+    const roleSelect = document.createElement("select");
+    roleSelect.className = "role-select";
+    roleSelect.innerHTML = `
+      <option value="user">user</option>
+      <option value="admin">admin</option>
+    `;
+    roleSelect.value = user.role || "user";
+    roleSelect.addEventListener("change", async () => {
+      try {
+        await api(`/api/admin/users/${encodeURIComponent(user.user_id)}/role`, {
+          method: "PUT",
+          body: JSON.stringify({ role: roleSelect.value }),
+        });
+        await loadUsers();
+        await loadDashboard();
+      } catch (error) {
+        roleSelect.value = user.role || "user";
+        alert(error.message);
+      }
+    });
+    tr.innerHTML = `
+      <td>${escapeHtml(user.name || "—")}</td>
+      <td>${escapeHtml(user.email || "—")}</td>
+      <td></td>
+      <td>${escapeHtml(user.auth_provider || "—")}</td>
+      <td>${escapeHtml(formatWhen(user.created_at))}</td>
+      <td><code>${escapeHtml(String(user.user_id || "").slice(0, 18))}</code></td>
+    `;
+    tr.children[2].append(roleSelect);
+    rows.append(tr);
+  });
+  if (!(data.items || []).length) {
+    rows.innerHTML = `<tr><td colspan="6">No users match this filter.</td></tr>`;
+  }
+  $("users-meta").textContent = `${data.total} user${data.total === 1 ? "" : "s"}`;
+  $("users-page").textContent = `Page ${data.page} of ${data.pages}`;
+  $("users-prev").disabled = data.page <= 1;
+  $("users-next").disabled = data.page >= data.pages;
+}
+
+$("users-filter").addEventListener("submit", (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  state.users.q = form.q.value.trim();
+  state.users.role = form.role.value;
+  state.users.sort = form.sort.value;
+  state.users.order = form.order.value;
+  state.users.page = 1;
+  loadUsers().catch((error) => {
+    $("users-meta").textContent = error.message;
+  });
+});
+
+$("users-prev").addEventListener("click", () => {
+  if (state.users.page <= 1) return;
+  state.users.page -= 1;
+  loadUsers().catch((error) => {
+    $("users-meta").textContent = error.message;
+  });
+});
+
+$("users-next").addEventListener("click", () => {
+  state.users.page += 1;
+  loadUsers().catch((error) => {
+    $("users-meta").textContent = error.message;
+  });
 });
 
 async function loadAppConfig() {

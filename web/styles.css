@@ -144,10 +144,13 @@ textarea, input, select {
 .job.off { opacity: 0.62; }
 .pill { font-size: 0.75rem; border-radius: 999px; padding: 3px 8px; background: #efe6da; }
 
-.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 8px; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 8px; }
 .stat { background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 14px 16px; }
 .stat b { display: block; font-family: Fraunces, Georgia, serif; font-size: 1.7rem; font-weight: 520; }
 .stat span { color: var(--muted); font-size: 0.82rem; }
+.pager { display: flex; align-items: center; gap: 12px; margin-top: 14px; }
+.pager .note { margin: 0; }
+.role-select { min-width: 110px; padding: 8px 10px; border-radius: 999px; }
 .note { color: var(--muted); font-size: 0.85rem; }
 .status { color: var(--ok); font-size: 0.9rem; }
 .table-wrap { overflow: auto; border: 1px solid var(--line); border-radius: 18px; background: var(--card); }

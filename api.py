@@ -204,6 +204,10 @@ class AppConfigUpdate(BaseModel):
     values: dict[str, str] = Field(default_factory=dict)
 
 
+class UserRoleUpdate(BaseModel):
+    role: str = Field(..., min_length=1, max_length=16)
+
+
 class EmailUpdate(BaseModel):
     email: str = ""
     app_password: str = ""
@@ -406,6 +410,46 @@ def write_app_config(body: AppConfigUpdate) -> dict[str, Any]:
         db.set_config(key, str(value if value is not None else ""))
         updated.append(key)
     return {"ok": True, "updated": updated, "items": db.list_app_config(mask_secrets=True)}
+
+
+@app.get("/api/admin/dashboard")
+def admin_dashboard() -> dict[str, Any]:
+    _require_admin()
+    return accounts.admin_dashboard_stats()
+
+
+@app.get("/api/admin/users")
+def admin_list_users(
+    q: str = "",
+    role: str = "",
+    sort: str = "created_at",
+    order: str = "desc",
+    page: int = 1,
+    page_size: int = 20,
+) -> dict[str, Any]:
+    _require_admin()
+    return accounts.list_users_page(
+        q=q,
+        role=role,
+        sort=sort,
+        order=order,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@app.put("/api/admin/users/{user_id}/role")
+def admin_set_user_role(user_id: str, body: UserRoleUpdate) -> dict[str, Any]:
+    admin = _require_admin()
+    try:
+        if str(admin.get("user_id")) == str(user_id) and accounts.normalize_role(body.role) != "admin":
+            raise ValueError("You cannot remove your own admin role.")
+        user = accounts.set_user_role(user_id, body.role)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"user": accounts.public_user(user)}
 
 
 @app.get("/api/usage")

@@ -782,6 +782,136 @@ def set_user_role(email_or_id: str, role: str = "admin") -> dict[str, Any]:
     return get_user(str(row["user_id"])) or {}
 
 
+_USER_SORT_COLUMNS = {
+    "created_at": "created_at",
+    "updated_at": "updated_at",
+    "name": "name",
+    "email": "email",
+    "role": "role",
+    "auth_provider": "auth_provider",
+}
+
+
+def admin_dashboard_stats() -> dict[str, Any]:
+    totals = db.fetch_one(
+        """
+        SELECT
+          COUNT(*) FILTER (WHERE user_id <> %s) AS total_users,
+          COUNT(*) FILTER (WHERE user_id <> %s AND role = 'admin') AS admin_users,
+          COUNT(*) FILTER (WHERE user_id <> %s AND role = 'user') AS regular_users,
+          COUNT(*) FILTER (
+            WHERE user_id <> %s AND created_at >= date_trunc('day', now())
+          ) AS new_today,
+          COUNT(*) FILTER (
+            WHERE user_id <> %s AND created_at >= date_trunc('day', now()) - interval '7 days'
+          ) AS new_7d
+        FROM users
+        """,
+        (db.SYSTEM_USER_ID,) * 5,
+    ) or {}
+    questions = db.fetch_one(
+        """
+        SELECT COALESCE(SUM(questions), 0) AS questions_today
+        FROM daily_usage
+        WHERE day = CURRENT_DATE
+        """
+    ) or {}
+    return {
+        "total_users": int(totals.get("total_users") or 0),
+        "admin_users": int(totals.get("admin_users") or 0),
+        "regular_users": int(totals.get("regular_users") or 0),
+        "new_today": int(totals.get("new_today") or 0),
+        "new_7d": int(totals.get("new_7d") or 0),
+        "questions_today": int(questions.get("questions_today") or 0),
+    }
+
+
+def list_users_page(
+    *,
+    q: str = "",
+    role: str = "",
+    sort: str = "created_at",
+    order: str = "desc",
+    page: int = 1,
+    page_size: int = 20,
+) -> dict[str, Any]:
+    page = max(1, int(page or 1))
+    page_size = max(1, min(int(page_size or 20), 100))
+    sort_col = _USER_SORT_COLUMNS.get((sort or "").strip().lower(), "created_at")
+    order_sql = "ASC" if str(order or "").lower() == "asc" else "DESC"
+
+    where = ["user_id <> %s"]
+    params: list[Any] = [db.SYSTEM_USER_ID]
+
+    role = str(role or "").strip().lower()
+    if role in {"user", "admin"}:
+        where.append("role = %s")
+        params.append(role)
+
+    q = str(q or "").strip()
+    if q:
+        where.append(
+            "(email ILIKE %s OR name ILIKE %s OR username ILIKE %s OR user_id ILIKE %s)"
+        )
+        like = f"%{q}%"
+        params.extend([like, like, like, like])
+
+    where_sql = " AND ".join(where)
+    total_row = db.fetch_one(
+        f"SELECT COUNT(*) AS count FROM users WHERE {where_sql}",
+        tuple(params),
+    ) or {}
+    total = int(total_row.get("count") or 0)
+    pages = max(1, (total + page_size - 1) // page_size)
+    if page > pages:
+        page = pages
+    offset = (page - 1) * page_size
+
+    rows = db.fetch_all(
+        f"""
+        SELECT user_id, email, name, username, role, auth_provider,
+               provider, model_id, created_at, updated_at, picture
+        FROM users
+        WHERE {where_sql}
+        ORDER BY {sort_col} {order_sql}, user_id ASC
+        LIMIT %s OFFSET %s
+        """,
+        tuple(params + [page_size, offset]),
+    )
+
+    items: list[dict[str, Any]] = []
+    for row in rows:
+        created = row.get("created_at")
+        updated = row.get("updated_at")
+        items.append(
+            {
+                "user_id": row.get("user_id"),
+                "email": row.get("email") or "",
+                "name": row.get("name") or "",
+                "username": row.get("username") or "",
+                "role": normalize_role(row.get("role")),
+                "auth_provider": row.get("auth_provider") or "",
+                "provider": row.get("provider") or "",
+                "model_id": row.get("model_id") or "",
+                "picture": row.get("picture") or "",
+                "created_at": created.isoformat() if hasattr(created, "isoformat") else str(created or ""),
+                "updated_at": updated.isoformat() if hasattr(updated, "isoformat") else str(updated or ""),
+            }
+        )
+
+    return {
+        "items": items,
+        "page": page,
+        "page_size": page_size,
+        "total": total,
+        "pages": pages,
+        "sort": sort_col,
+        "order": order_sql.lower(),
+        "q": q,
+        "role": role,
+    }
+
+
 def save_user_schedules(user_id: str, jobs: list[dict[str, Any]]) -> None:
     user_id = _safe_user_id(user_id)
     with db.connect() as conn:
