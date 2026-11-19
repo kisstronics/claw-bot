@@ -1,14 +1,12 @@
 """
-FastAPI console: per-user chat, schedules, email settings, and Telegram webhook.
+FastAPI console: Google Sign-In, per-user chat, schedules, email, Telegram webhook.
 """
 
 from __future__ import annotations
 
 import json
 import logging
-import os
 import threading
-from urllib.parse import urlparse
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -30,7 +28,6 @@ from agents.reminder import run_reminders
 from agents.runtime import run_agent_turn
 from channels.telegram import (
     bot_handler,
-    bot_public_identity,
     configure_webhook,
     dispatch_update,
     webhook_secret_ok,
@@ -110,8 +107,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Knics Agent",
-    description="Per-user agent console with Telegram login.",
-    version="0.5.0",
+    description="Per-user agent console with Google Sign-In.",
+    version="0.6.0",
     lifespan=lifespan,
 )
 
@@ -147,13 +144,8 @@ class InvokeRequest(BaseModel):
     reset: bool = False
 
 
-class PhoneRequest(BaseModel):
-    phone: str = Field(..., min_length=1, max_length=32)
-
-
-class VerifyRequest(BaseModel):
-    phone: str = Field(..., min_length=1, max_length=32)
-    code: str = Field(..., min_length=4, max_length=8)
+class GoogleLoginRequest(BaseModel):
+    credential: str = Field(..., min_length=1)
 
 
 class SettingsUpdate(BaseModel):
@@ -224,70 +216,27 @@ def health() -> dict[str, Any]:
     }
 
 
-def _telegram_site_origin() -> str:
-    """Public origin Telegram already accepts for this bot, taken from the webhook URL."""
-    parsed = urlparse(os.environ.get("TELEGRAM_WEBHOOK_URL", "").strip())
-    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-        return ""
-    return f"{parsed.scheme}://{parsed.hostname}"
-
-
-@app.get("/api/auth/telegram")
-def telegram_login_config() -> dict[str, str]:
-    info = bot_public_identity()
-    username = info.get("username") or ""
-    if not username:
+@app.get("/api/auth/google")
+def google_login_config() -> dict[str, str]:
+    client_id = accounts.google_client_id()
+    if not client_id:
         raise HTTPException(
             status_code=503,
-            detail=info.get("error") or "Telegram login is not configured.",
+            detail="Google login is not configured. Set GOOGLE_CLIENT_ID.",
         )
-    return {
-        "bot_username": username,
-        "bot_id": info.get("id") or "",
-        "site_origin": _telegram_site_origin(),
-    }
+    return {"client_id": client_id}
 
 
-@app.post("/api/auth/telegram")
-async def telegram_login(request: Request) -> dict[str, Any]:
+@app.post("/api/auth/google")
+def google_login(body: GoogleLoginRequest) -> dict[str, Any]:
     try:
-        body = await request.json()
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=400, detail="Telegram login data is missing.") from exc
-    try:
-        return accounts.login_with_telegram(body if isinstance(body, dict) else {})
+        return accounts.login_with_google(body.credential)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except PermissionError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
-
-
-@app.post("/api/auth/request")
-def request_otp(body: PhoneRequest) -> dict[str, bool]:
-    print(f"Requesting OTP for phone: {body}")
-    try:
-        accounts.request_otp(body.phone)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except LookupError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except RuntimeError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-    return {"ok": True}
-
-
-@app.post("/api/auth/verify")
-def verify_otp(body: VerifyRequest) -> dict[str, Any]:
-    try:
-        return accounts.verify_otp(body.phone, body.code)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except PermissionError as exc:
-        raise HTTPException(status_code=401, detail=str(exc)) from exc
 
 
 @app.get("/api/auth/me")

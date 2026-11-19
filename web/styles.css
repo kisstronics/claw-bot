@@ -176,18 +176,7 @@ th { color: var(--muted); font-weight: 500; }
 .login-card h1 { font-size: 2rem; }
 .login-card .note { max-width: 36ch; }
 .login-card a { color: var(--accent); }
-.telegram-login { min-height: 48px; display: grid; place-items: center; }
-.telegram-auth {
-  appearance: none;
-  border: 0;
-  border-radius: 20px;
-  background: #54a9eb;
-  color: #fff;
-  font: 500 16px/1 Outfit, sans-serif;
-  padding: 12px 22px;
-  cursor: pointer;
-}
-.telegram-auth:disabled { opacity: 0.6; cursor: wait; }
-.telegram-auth:not(:disabled):hover { background: #4598d6; }
+.google-login { min-height: 48px; display: grid; place-items: center; }
+.google-login iframe { color-scheme: light; }
 #logout { margin-top: auto; }
 .aside-note { margin-top: 12px; }

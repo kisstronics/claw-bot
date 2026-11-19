@@ -344,7 +344,7 @@ def dispatch_update(
                 return
             print("[telegram] contact phone linked", flush=True)
             bot_handler.send(
-                "Phone number saved. Sign in on the website with Log in with Telegram.",
+                "Phone number saved. Sign in on the website with Google.",
                 chat_id=chat_id,
                 reply_markup=REMOVE_KEYBOARD,
             )
@@ -363,7 +363,7 @@ def dispatch_update(
                 return
             print(f"[telegram] phone linked digits={len(typed_phone)}", flush=True)
             bot_handler.send(
-                "Phone number saved. Sign in on the website with Log in with Telegram.",
+                "Phone number saved. Sign in on the website with Google.",
                 chat_id=chat_id,
                 reply_markup=REMOVE_KEYBOARD,
             )
@@ -372,7 +372,7 @@ def dispatch_update(
         if command in {"/start", "/help"}:
             bot_handler.send(
                 "Knics is ready.\n\n"
-                "On the website, tap Log in with Telegram and confirm in this app. "
+                "On the website, sign in with Google to open the console. "
                 "You can also type here to talk to your agent.",
                 chat_id=chat_id,
             )

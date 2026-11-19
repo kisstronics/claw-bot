@@ -1,4 +1,4 @@
-"""Per-Telegram-user profiles, Telegram login, email settings, and schedules."""
+"""Per-user profiles, Google Sign-In, Telegram channel links, email, and schedules."""
 
 from __future__ import annotations
 
@@ -29,7 +29,8 @@ _OTP: dict[str, dict[str, Any]] = {}
 _SESSIONS: dict[str, dict[str, Any]] = {}
 _SESSIONS_LOADED = False
 
-_USER_ID_RE = re.compile(r"^[0-9]{1,20}$")
+# Telegram numeric ids, or Google ids as g_<sub>
+_USER_ID_RE = re.compile(r"^(?:[0-9]{1,20}|g_[a-zA-Z0-9_-]{1,60})$")
 _OTP_TTL = 300
 _OTP_ATTEMPTS = 5
 _OTP_COOLDOWN = 30
@@ -85,8 +86,16 @@ def phone_from_text(text: str) -> str:
 def _safe_user_id(user_id: str) -> str:
     user_id = str(user_id or "").strip()
     if not _USER_ID_RE.match(user_id):
-        raise ValueError("Invalid Telegram user id.")
+        raise ValueError("Invalid user id.")
     return user_id
+
+
+def _google_user_id(sub: str) -> str:
+    sub = str(sub or "").strip()
+    if not re.fullmatch(r"[a-zA-Z0-9_-]{1,60}", sub):
+        digest = hashlib.sha256(sub.encode("utf-8")).hexdigest()[:40]
+        return f"g_{digest}"
+    return f"g_{sub}"
 
 
 def user_dir(user_id: str) -> Path:
@@ -100,7 +109,7 @@ def memory_dir(user_id: str) -> Path:
 
 
 def _blank_index() -> dict[str, Any]:
-    return {"users": {}, "phones": {}}
+    return {"users": {}, "phones": {}, "emails": {}}
 
 
 def _load_index() -> dict[str, Any]:
@@ -114,6 +123,7 @@ def _load_index() -> dict[str, Any]:
         return _blank_index()
     data.setdefault("users", {})
     data.setdefault("phones", {})
+    data.setdefault("emails", {})
     return data
 
 
@@ -179,8 +189,13 @@ def public_user(user: dict[str, Any]) -> dict[str, Any]:
         "user_id": user.get("user_id"),
         "name": user.get("name") or "",
         "username": user.get("username") or "",
+        "email": user.get("email") or "",
+        "picture": user.get("picture") or "",
         "phone": masked,
         "phone_linked": bool(phone),
+        "auth_provider": user.get("auth_provider") or (
+            "google" if str(user.get("user_id") or "").startswith("g_") else "telegram"
+        ),
     }
 
 
@@ -253,8 +268,11 @@ def ensure_user(
                 "user_id": user_id,
                 "chat_id": chat_id,
                 "phone": "",
+                "email": "",
+                "picture": "",
                 "name": name or "",
                 "username": username or "",
+                "auth_provider": "telegram",
                 "provider": "",
                 "model_id": "",
             }
@@ -266,11 +284,71 @@ def ensure_user(
                 current["name"] = name
             if username:
                 current["username"] = username
+            current.setdefault("auth_provider", "telegram")
         users[user_id] = current
         _save_index(data)
         profile = dict(current)
     if created:
         _provision(user_id, import_legacy=import_legacy)
+    return profile
+
+
+def ensure_google_user(
+    *,
+    sub: str,
+    email: str = "",
+    name: str = "",
+    picture: str = "",
+) -> dict[str, Any]:
+    user_id = _google_user_id(sub)
+    email = str(email or "").strip().lower()
+    name = str(name or "").strip()
+    picture = str(picture or "").strip()
+    created = False
+    with _LOCK:
+        data = _load_index()
+        users: dict[str, Any] = data["users"]
+        emails: dict[str, str] = data["emails"]
+        current = users.get(user_id)
+        if not isinstance(current, dict):
+            created = True
+            current = {
+                "user_id": user_id,
+                "chat_id": "",
+                "phone": "",
+                "email": email,
+                "picture": picture,
+                "name": name,
+                "username": email.split("@", 1)[0] if email else "",
+                "auth_provider": "google",
+                "google_sub": str(sub),
+                "provider": "",
+                "model_id": "",
+            }
+        else:
+            current["auth_provider"] = "google"
+            current["google_sub"] = str(sub)
+            if email:
+                previous = str(current.get("email") or "").strip().lower()
+                if previous and previous != email:
+                    emails.pop(previous, None)
+                current["email"] = email
+            if name:
+                current["name"] = name
+            if picture:
+                current["picture"] = picture
+            if email and not current.get("username"):
+                current["username"] = email.split("@", 1)[0]
+        if email:
+            owner = emails.get(email)
+            if owner and owner != user_id:
+                raise ValueError("That Google email is already linked to another account.")
+            emails[email] = user_id
+        users[user_id] = current
+        _save_index(data)
+        profile = dict(current)
+    if created:
+        _provision(user_id, import_legacy=False)
     return profile
 
 
@@ -349,6 +427,58 @@ def request_otp(phone: str) -> None:
         with _LOCK:
             _OTP.pop(phone, None)
         raise RuntimeError(result.get("error") or "Could not send the code on Telegram.")
+
+
+def google_client_id() -> str:
+    return os.environ.get("GOOGLE_CLIENT_ID", "").strip()
+
+
+def login_with_google(credential: str) -> dict[str, Any]:
+    """Verify a Google Identity Services ID token and open a session."""
+    client_id = google_client_id()
+    if not client_id:
+        raise RuntimeError("Google login is not configured. Set GOOGLE_CLIENT_ID.")
+
+    token = str(credential or "").strip()
+    if not token:
+        raise ValueError("Google credential is missing.")
+
+    try:
+        from google.auth.transport import requests as google_requests
+        from google.oauth2 import id_token
+    except ImportError as exc:
+        raise RuntimeError(
+            "Install google-auth to enable Google Sign-In (pip install google-auth)."
+        ) from exc
+
+    try:
+        info = id_token.verify_oauth2_token(
+            token,
+            google_requests.Request(),
+            client_id,
+            clock_skew_in_seconds=60,
+        )
+    except Exception as exc:  # noqa: BLE001 — surface as auth failure
+        raise PermissionError("Google login could not be verified.") from exc
+
+    issuer = str(info.get("iss") or "")
+    if issuer not in {"accounts.google.com", "https://accounts.google.com"}:
+        raise PermissionError("Google login could not be verified.")
+    if info.get("email_verified") is False:
+        raise PermissionError("Verify your Google email address, then try again.")
+
+    sub = str(info.get("sub") or "").strip()
+    if not sub:
+        raise PermissionError("Google login could not be verified.")
+
+    user = ensure_google_user(
+        sub=sub,
+        email=str(info.get("email") or ""),
+        name=str(info.get("name") or ""),
+        picture=str(info.get("picture") or ""),
+    )
+    session = create_session(str(user["user_id"]))
+    return {"token": session, "user": public_user(user)}
 
 
 def login_with_telegram(payload: dict[str, Any]) -> dict[str, Any]:
