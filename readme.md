@@ -1,6 +1,18 @@
-# Console
+# Console (local)
 python -m uvicorn api:app --reload --host 0.0.0.0 --port 8500
+# or: python main.py
 Then open http://127.0.0.1:8500/
+
+# Vercel
+# Entry: main:app (see pyproject.toml [tool.vercel] + vercel.json)
+# Deploy: vercel --prod
+# Set env vars in the Vercel project (MODEL_PROVIDER, API keys, GOOGLE_CLIENT_ID, TELEGRAM_*, GMAIL_*, etc.)
+
+# Google Sign-In (web console)
+# 1. Create an OAuth client (Web) in Google Cloud Console
+# 2. Add authorized JavaScript origins: http://127.0.0.1:8500 and your Vercel URL
+# 3. Set:
+$env:GOOGLE_CLIENT_ID = "1234567890-xxxx.apps.googleusercontent.com"
 
 # Bedrock (default)
 $env:MODEL_PROVIDER = "bedrock"

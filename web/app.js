@@ -41,112 +41,72 @@ async function api(path, options = {}) {
 function showGate() {
   $("shell").hidden = true;
   $("gate").hidden = false;
-  mountTelegramLogin();
+  mountGoogleLogin();
 }
 
-function pageIsFramed() {
+function loadGoogleScript() {
+  if (window.google?.accounts?.id) return Promise.resolve();
+  if (window.__knicsGoogleScript) return window.__knicsGoogleScript;
+  window.__knicsGoogleScript = new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = "https://accounts.google.com/gsi/client";
+    script.async = true;
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error("Could not load Google Sign-In. Check the connection and refresh."));
+    document.head.appendChild(script);
+  });
+  return window.__knicsGoogleScript;
+}
+
+async function handleGoogleCredential(response) {
+  $("login-status").textContent = "Signing in…";
   try {
-    return window.top !== window.self;
+    const data = await api("/api/auth/google", {
+      method: "POST",
+      body: JSON.stringify({ credential: response.credential }),
+    });
+    localStorage.setItem("knics_token", data.token);
+    $("login-status").textContent = "";
+    showApp(data);
   } catch (error) {
-    return true;
+    $("login-status").textContent = error.message;
   }
 }
 
-function mountTelegramLogin() {
-  const slot = $("telegram-login");
+function mountGoogleLogin() {
+  const slot = $("google-login");
   if (!slot || slot.dataset.ready === "1") return;
   slot.dataset.ready = "1";
-  const domainNote = $("login-domain");
-  window.onTelegramAuth = async (user) => {
-    $("login-status").textContent = "Signing in…";
-    try {
-      const data = await api("/api/auth/telegram", {
-        method: "POST",
-        body: JSON.stringify(user),
-      });
-      localStorage.setItem("knics_token", data.token);
-      $("login-status").textContent = "";
-      showApp(data);
-    } catch (error) {
-      $("login-status").textContent = error.message;
-    }
-  };
-  fetch("/api/auth/telegram")
+  $("login-status").textContent = "";
+
+  fetch("/api/auth/google")
     .then(async (response) => {
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
-        const detail = data.detail || "Telegram login is unavailable.";
-        throw new Error(typeof detail === "string" ? detail : "Telegram login is unavailable.");
+        const detail = data.detail || "Google login is unavailable.";
+        throw new Error(typeof detail === "string" ? detail : "Google login is unavailable.");
       }
+      if (!data.client_id) throw new Error("Google login is not configured.");
       return data;
     })
-    .then((data) => {
-      let allowed = "";
-      try {
-        allowed = data.site_origin ? new URL(data.site_origin).origin : "";
-      } catch (error) {
-        allowed = "";
-      }
-      if (allowed && allowed !== location.origin) {
-        slot.dataset.ready = "";
-        if (domainNote) {
-          domainNote.textContent = "";
-          const link = document.createElement("a");
-          link.href = `${allowed}${location.pathname}`;
-          link.textContent = allowed;
-          domainNote.append(
-            "Telegram only accepts login on ",
-            link,
-            ". Open that address in a browser tab.",
-          );
-        }
-        return;
-      }
-      if (!data.bot_id) {
-        throw new Error("Telegram login is not configured.");
-      }
-      if (domainNote) {
-        domainNote.textContent = pageIsFramed()
-          ? "This page is inside another frame. If the login window does not open, use the site in a normal browser tab."
-          : "";
-      }
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "telegram-auth";
-      button.textContent = "Log in with Telegram";
-      button.disabled = true;
-      button.addEventListener("click", () => {
-        const login = window.Telegram && window.Telegram.Login;
-        if (!login) {
-          $("login-status").textContent = "Telegram login is still loading. Try again in a moment.";
-          return;
-        }
-        $("login-status").textContent = "";
-        try {
-          login.auth({ bot_id: data.bot_id, request_access: "write" }, (user) => {
-            if (!user) {
-              $("login-status").textContent = "Telegram did not return a login. Try again.";
-              return;
-            }
-            window.onTelegramAuth(user);
-          });
-        } catch (error) {
-          $("login-status").textContent = error.message || "Could not open Telegram login.";
-        }
+    .then(async (data) => {
+      await loadGoogleScript();
+      window.google.accounts.id.initialize({
+        client_id: data.client_id,
+        callback: handleGoogleCredential,
+        auto_select: false,
+        cancel_on_tap_outside: true,
       });
-      slot.replaceChildren(button);
-      const script = document.createElement("script");
-      script.async = true;
-      script.src = "https://telegram.org/js/telegram-widget.js?22";
-      script.onload = () => {
-        button.disabled = false;
-      };
-      script.onerror = () => {
-        slot.dataset.ready = "";
-        button.disabled = true;
-        $("login-status").textContent = "Could not load Telegram login. Check the connection and refresh.";
-      };
-      document.head.appendChild(script);
+      slot.replaceChildren();
+      window.google.accounts.id.renderButton(slot, {
+        type: "standard",
+        theme: "outline",
+        size: "large",
+        text: "signin_with",
+        shape: "pill",
+        logo_alignment: "left",
+        width: 280,
+      });
     })
     .catch((error) => {
       slot.dataset.ready = "";
@@ -155,13 +115,13 @@ function mountTelegramLogin() {
 }
 
 function userLabel(user) {
-  const username = String(user?.username || "").trim().replace(/^@/, "");
   const name = String(user?.name || "").trim();
-  if (name && username && name.toLowerCase() !== username.toLowerCase()) {
-    return `${name} (@${username})`;
-  }
-  if (username) return `@${username}`;
+  const email = String(user?.email || "").trim();
+  if (name && email) return `${name} · ${email}`;
+  if (email) return email;
   if (name) return name;
+  const username = String(user?.username || "").trim().replace(/^@/, "");
+  if (username) return username;
   return "Signed in";
 }
 

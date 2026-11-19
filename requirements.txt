@@ -4,3 +4,5 @@ fastapi>=0.115.0
 uvicorn[standard]>=0.32.0
 python-telegram-bot>=21.0
 groq>=0.11.0
+google-auth>=2.35.0
+requests>=2.32.0
