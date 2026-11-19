@@ -40,7 +40,13 @@ from channels.telegram import (
     dispatch_update,
     webhook_secret_ok,
 )
-from models import MODEL_CATALOG, active_selection, apply_runtime_settings, get_provider
+from models import (
+    MODEL_CATALOG,
+    active_selection,
+    apply_runtime_settings,
+    get_provider,
+    refresh_defaults,
+)
 from scheduler import SimpleScheduler
 from user_scope import current_user_id, reset_user, use_user
 
@@ -107,6 +113,7 @@ def _run_update(update: dict[str, Any]) -> None:
 async def lifespan(app: FastAPI):
     global _scheduler
     db.init_db()
+    refresh_defaults()
     _scheduler = SimpleScheduler(
         invoke=_scheduled_invoke,
         handlers={
