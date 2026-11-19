@@ -3,3 +3,4 @@ data/
 token-usage.log
 __pycache__/
 *.pyc
+.knics_data
