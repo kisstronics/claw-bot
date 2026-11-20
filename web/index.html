@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Knics</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -11,16 +11,72 @@
 </head>
 <body>
   <div id="gate" class="gate">
-    <div class="card login-card">
+    <div class="card login-card" id="login-card">
       <p class="eyebrow">Knics</p>
       <h1>Sign in with Google</h1>
       <p class="note">Use your Google account to open the console.</p>
       <div id="google-login" class="google-login"></div>
       <p id="login-status" class="status"></p>
     </div>
+    <article class="card public-card" id="public-about" hidden>
+      <button type="button" class="ghost public-back" data-public-back>Back to sign in</button>
+      <p class="eyebrow">About</p>
+      <h1>Who we are</h1>
+      <div class="prose">
+        <p>Knics is a personal AI console that helps you talk to an agent, run schedules, manage email, and keep your day on track — all tied to your own account.</p>
+        <p>We build tools that stay useful without getting in the way: clear conversation, reliable reminders, and settings that belong to you.</p>
+      </div>
+    </article>
+    <article class="card public-card" id="public-privacy" hidden>
+      <button type="button" class="ghost public-back" data-public-back>Back to sign in</button>
+      <p class="eyebrow">Legal</p>
+      <h1>Privacy</h1>
+      <div class="prose">
+        <p>We use your Google account only to sign you in and identify your workspace. Conversation history, schedules, email settings, and usage stay associated with your account.</p>
+        <p>Secrets such as mailbox app passwords are stored on the server for your account and are not kept in the browser after you save. We do not sell your personal data.</p>
+        <p>You can sign out at any time. For privacy questions, use the Contact us page.</p>
+      </div>
+    </article>
+    <article class="card public-card" id="public-contact" hidden>
+      <button type="button" class="ghost public-back" data-public-back>Back to sign in</button>
+      <p class="eyebrow">Support</p>
+      <h1>Contact us</h1>
+      <div class="prose">
+        <p>Need help with Knics, your account, or privacy requests?</p>
+        <p>Email us at <a href="mailto:hello@knics.app">hello@knics.app</a> and we will get back to you as soon as we can.</p>
+      </div>
+    </article>
   </div>
   <div class="app" id="shell">
-    <aside>
+    <header class="mobile-bar" id="mobile-bar">
+      <button type="button" id="menu-toggle" class="menu-toggle" aria-label="Open menu" aria-expanded="false" aria-controls="mobile-menu">
+        <span class="menu-toggle-bars" aria-hidden="true"></span>
+      </button>
+      <a class="mobile-wordmark" href="#talk" id="mobile-home">KNICS</a>
+      <button type="button" id="user-toggle" class="mobile-account-btn" aria-label="Account" aria-expanded="false" aria-controls="user-sheet">
+        <img id="user-avatar-img" alt="" hidden />
+        <span id="user-avatar-fallback" class="user-avatar-fallback">U</span>
+      </button>
+    </header>
+
+    <div class="mobile-menu" id="mobile-menu" role="dialog" aria-modal="true" aria-label="Menu" hidden>
+      <nav class="mobile-menu-nav" id="mobile-nav">
+        <button class="mobile-nav-link active" data-panel="talk" type="button">Talk</button>
+        <button class="mobile-nav-link" data-panel="schedules" type="button">Schedules</button>
+        <button class="mobile-nav-link admin-only" data-panel="dashboard" type="button" hidden>Dashboard</button>
+        <button class="mobile-nav-link admin-only" data-panel="users" type="button" hidden>Users</button>
+        <button class="mobile-nav-link admin-only" data-panel="models" type="button" hidden>Models</button>
+        <button class="mobile-nav-link admin-only" data-panel="appconfig" type="button" hidden>App config</button>
+        <button class="mobile-nav-link" data-panel="email" type="button">Email</button>
+        <button class="mobile-nav-link" data-panel="usage" type="button">Usage</button>
+      </nav>
+      <div class="mobile-menu-footer">
+        <button type="button" id="mobile-account" class="mobile-cta">Account</button>
+        <button type="button" id="mobile-logout" class="mobile-cta ghost-cta">Log out</button>
+      </div>
+    </div>
+
+    <aside id="app-aside">
       <div class="brand">
         <span class="mark">K</span>
         <div>
@@ -29,7 +85,7 @@
           <small id="brand-model">loading…</small>
         </div>
       </div>
-      <nav>
+      <nav id="app-nav">
         <button class="nav active" data-panel="talk">Talk</button>
         <button class="nav" data-panel="schedules">Schedules</button>
         <button class="nav admin-only" data-panel="dashboard" hidden>Dashboard</button>
@@ -42,6 +98,27 @@
       <button id="logout" class="ghost" type="button">Log out</button>
       <p class="aside-note">Memory, schedules, and email stay with your Google account.</p>
     </aside>
+
+    <div class="user-sheet" id="user-sheet" hidden>
+      <div class="user-sheet-card" role="dialog" aria-labelledby="user-sheet-name">
+        <button type="button" id="user-sheet-close" class="icon-btn sheet-close" aria-label="Close account">×</button>
+        <div class="user-sheet-hero">
+          <img id="user-sheet-picture" alt="" hidden />
+          <span id="user-sheet-fallback" class="user-avatar-fallback lg">U</span>
+          <div>
+            <h2 id="user-sheet-name">Account</h2>
+            <p id="user-sheet-email" class="note"></p>
+          </div>
+        </div>
+        <dl class="user-sheet-meta">
+          <div><dt>Role</dt><dd id="user-sheet-role">—</dd></div>
+          <div><dt>Sign-in</dt><dd id="user-sheet-provider">—</dd></div>
+          <div><dt>Username</dt><dd id="user-sheet-username">—</dd></div>
+          <div><dt>Phone</dt><dd id="user-sheet-phone">—</dd></div>
+        </dl>
+        <button type="button" id="user-sheet-logout" class="sheet-logout">Log out</button>
+      </div>
+    </div>
     <main>
       <section id="talk" class="panel visible">
         <header class="panel-head">
@@ -257,8 +334,67 @@
           </table>
         </div>
       </section>
+
+      <section id="about" class="panel">
+        <header class="panel-head">
+          <div>
+            <p class="eyebrow">About</p>
+            <h1>Who we are</h1>
+          </div>
+        </header>
+        <div class="card prose">
+          <p>Knics is a personal AI console that helps you talk to an agent, run schedules, manage email, and keep your day on track — all tied to your own account.</p>
+          <p>We build tools that stay useful without getting in the way: clear conversation, reliable reminders, and settings that belong to you.</p>
+        </div>
+      </section>
+
+      <section id="privacy" class="panel">
+        <header class="panel-head">
+          <div>
+            <p class="eyebrow">Legal</p>
+            <h1>Privacy</h1>
+          </div>
+        </header>
+        <div class="card prose">
+          <p>We use your Google account only to sign you in and identify your workspace. Conversation history, schedules, email settings, and usage stay associated with your account.</p>
+          <p>Secrets such as mailbox app passwords are stored on the server for your account and are not kept in the browser after you save. We do not sell your personal data.</p>
+          <p>You can sign out at any time. For privacy questions, use Contact us.</p>
+        </div>
+      </section>
+
+      <section id="contact" class="panel">
+        <header class="panel-head">
+          <div>
+            <p class="eyebrow">Support</p>
+            <h1>Contact us</h1>
+          </div>
+        </header>
+        <div class="card prose">
+          <p>Need help with Knics, your account, or privacy requests?</p>
+          <p>Email us at <a href="mailto:hello@knics.app">hello@knics.app</a> and we will get back to you as soon as we can.</p>
+        </div>
+      </section>
     </main>
+
+    <footer class="site-footer app-footer">
+      <nav class="footer-links" aria-label="Site">
+        <button type="button" class="footer-link" data-panel="about">Who we are</button>
+        <button type="button" class="footer-link" data-panel="privacy">Privacy</button>
+        <button type="button" class="footer-link" data-panel="contact">Contact us</button>
+      </nav>
+      <p class="footer-copy">Knics@2026</p>
+    </footer>
   </div>
+
+  <footer class="site-footer gate-footer" id="gate-footer">
+    <nav class="footer-links" aria-label="Site">
+      <button type="button" class="footer-link" data-public="about">Who we are</button>
+      <button type="button" class="footer-link" data-public="privacy">Privacy</button>
+      <button type="button" class="footer-link" data-public="contact">Contact us</button>
+    </nav>
+    <p class="footer-copy">Knics@2026</p>
+  </footer>
+
   <script src="/static/app.js"></script>
 </body>
 </html>

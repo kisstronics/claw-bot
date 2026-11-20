@@ -14,8 +14,11 @@ function show(panel) {
     panel = "talk";
   }
   document.querySelectorAll(".panel").forEach((node) => node.classList.remove("visible"));
-  document.querySelectorAll(".nav").forEach((node) => node.classList.toggle("active", node.dataset.panel === panel));
+  document
+    .querySelectorAll(".nav, .mobile-nav-link")
+    .forEach((node) => node.classList.toggle("active", node.dataset.panel === panel));
   $(panel).classList.add("visible");
+  closeMenu();
   if (panel === "schedules") loadSchedules();
   if (panel === "dashboard") loadDashboard();
   if (panel === "users") loadUsers();
@@ -25,12 +28,123 @@ function show(panel) {
   if (panel === "usage") loadUsage();
 }
 
+function userInitials(user) {
+  const name = String(user?.name || "").trim();
+  if (name) {
+    const parts = name.split(/\s+/).filter(Boolean);
+    return ((parts[0]?.[0] || "") + (parts[1]?.[0] || "")).toUpperCase() || "U";
+  }
+  const email = String(user?.email || "").trim();
+  if (email) return email[0].toUpperCase();
+  return "U";
+}
+
+function setAvatar(imgId, fallbackId, user) {
+  const img = $(imgId);
+  const fallback = $(fallbackId);
+  const picture = String(user?.picture || "").trim();
+  const initials = userInitials(user);
+  if (fallback) fallback.textContent = initials;
+  if (!img) return;
+  if (picture) {
+    img.hidden = false;
+    img.src = picture;
+    img.alt = String(user?.name || user?.email || "Account");
+    if (fallback) fallback.hidden = true;
+    img.onerror = () => {
+      img.hidden = true;
+      img.removeAttribute("src");
+      if (fallback) fallback.hidden = false;
+    };
+  } else {
+    img.hidden = true;
+    img.removeAttribute("src");
+    if (fallback) fallback.hidden = false;
+  }
+}
+
+function fillUserSheet(user) {
+  const name = String(user?.name || "").trim() || "Account";
+  const email = String(user?.email || "").trim();
+  const username = String(user?.username || "").trim().replace(/^@/, "");
+  const phone = String(user?.phone || "").trim();
+  const role = String(user?.role || (user?.is_admin ? "admin" : "user")).trim();
+  const provider = String(user?.auth_provider || "").trim();
+  const nameEl = $("user-sheet-name");
+  const emailEl = $("user-sheet-email");
+  if (nameEl) nameEl.textContent = name;
+  if (emailEl) emailEl.textContent = email || "No email on file";
+  const roleEl = $("user-sheet-role");
+  const providerEl = $("user-sheet-provider");
+  const usernameEl = $("user-sheet-username");
+  const phoneEl = $("user-sheet-phone");
+  if (roleEl) roleEl.textContent = role || "—";
+  if (providerEl) providerEl.textContent = provider || "—";
+  if (usernameEl) usernameEl.textContent = username ? `@${username}` : "—";
+  if (phoneEl) phoneEl.textContent = phone || "—";
+  setAvatar("user-sheet-picture", "user-sheet-fallback", user);
+  setAvatar("user-avatar-img", "user-avatar-fallback", user);
+}
+
+function openMenu() {
+  document.body.classList.add("menu-open");
+  const toggle = $("menu-toggle");
+  const menu = $("mobile-menu");
+  if (toggle) {
+    toggle.setAttribute("aria-expanded", "true");
+    toggle.setAttribute("aria-label", "Close menu");
+  }
+  if (menu) menu.hidden = false;
+}
+
+function closeMenu() {
+  document.body.classList.remove("menu-open");
+  const toggle = $("menu-toggle");
+  const menu = $("mobile-menu");
+  if (toggle) {
+    toggle.setAttribute("aria-expanded", "false");
+    toggle.setAttribute("aria-label", "Open menu");
+  }
+  if (menu) menu.hidden = true;
+}
+
+function openUserSheet() {
+  closeMenu();
+  fillUserSheet(state.user);
+  const sheet = $("user-sheet");
+  const toggle = $("user-toggle");
+  if (sheet) sheet.hidden = false;
+  if (toggle) toggle.setAttribute("aria-expanded", "true");
+}
+
+function closeUserSheet() {
+  const sheet = $("user-sheet");
+  const toggle = $("user-toggle");
+  if (sheet) sheet.hidden = true;
+  if (toggle) toggle.setAttribute("aria-expanded", "false");
+}
+
+async function logout() {
+  closeMenu();
+  closeUserSheet();
+  try {
+    await api("/api/auth/logout", { method: "POST" });
+  } catch (error) {
+    /* the local session is cleared either way */
+  }
+  localStorage.removeItem("knics_token");
+  state.sessionId = null;
+  state.user = null;
+  showGate();
+}
+
 function applyRoleUI(user) {
   state.user = user || null;
   state.isAdmin = Boolean(user && user.is_admin);
   document.querySelectorAll(".admin-only").forEach((node) => {
     node.hidden = !state.isAdmin;
   });
+  fillUserSheet(user);
   const brandModel = $("brand-model");
   if (brandModel && state.settings) {
     const quota = state.settings.quota;
@@ -40,8 +154,56 @@ function applyRoleUI(user) {
   }
 }
 
-document.querySelectorAll(".nav").forEach((button) => {
+document.querySelectorAll(".nav, .mobile-nav-link").forEach((button) => {
   button.addEventListener("click", () => show(button.dataset.panel));
+});
+
+$("menu-toggle")?.addEventListener("click", () => {
+  if (document.body.classList.contains("menu-open")) closeMenu();
+  else openMenu();
+});
+$("mobile-home")?.addEventListener("click", (event) => {
+  event.preventDefault();
+  show("talk");
+});
+$("user-toggle")?.addEventListener("click", openUserSheet);
+$("mobile-account")?.addEventListener("click", openUserSheet);
+$("mobile-logout")?.addEventListener("click", logout);
+$("user-sheet-close")?.addEventListener("click", closeUserSheet);
+$("user-sheet-logout")?.addEventListener("click", logout);
+$("user-sheet")?.addEventListener("click", (event) => {
+  if (event.target === $("user-sheet")) closeUserSheet();
+});
+$("brand-user")?.addEventListener("click", openUserSheet);
+
+function showPublicPage(page) {
+  const loginCard = $("login-card");
+  if (loginCard) loginCard.hidden = Boolean(page);
+  ["about", "privacy", "contact"].forEach((name) => {
+    const node = $(`public-${name}`);
+    if (node) node.hidden = name !== page;
+  });
+}
+
+function hidePublicPages() {
+  showPublicPage(null);
+}
+
+document.querySelectorAll(".footer-link[data-panel]").forEach((button) => {
+  button.addEventListener("click", () => show(button.dataset.panel));
+});
+document.querySelectorAll(".footer-link[data-public]").forEach((button) => {
+  button.addEventListener("click", () => showPublicPage(button.dataset.public));
+});
+document.querySelectorAll("[data-public-back]").forEach((button) => {
+  button.addEventListener("click", hidePublicPages);
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape") return;
+  closeUserSheet();
+  closeMenu();
+  if (!document.body.classList.contains("authed")) hidePublicPages();
 });
 
 async function api(path, options = {}) {
@@ -73,6 +235,9 @@ async function api(path, options = {}) {
 
 function showGate() {
   document.body.classList.remove("authed");
+  closeMenu();
+  closeUserSheet();
+  hidePublicPages();
   const slot = $("google-login");
   if (slot) slot.dataset.ready = "";
   mountGoogleLogin();
@@ -803,16 +968,7 @@ $("appconfig-form").addEventListener("submit", async (event) => {
   }
 });
 
-$("logout").addEventListener("click", async () => {
-  try {
-    await api("/api/auth/logout", { method: "POST" });
-  } catch (error) {
-    /* the local session is cleared either way */
-  }
-  localStorage.removeItem("knics_token");
-  state.sessionId = null;
-  showGate();
-});
+$("logout").addEventListener("click", logout);
 
 if (localStorage.getItem("knics_token")) {
   api("/api/auth/me").then(showApp).catch(() => showGate());
