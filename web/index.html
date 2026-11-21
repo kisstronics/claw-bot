@@ -11,7 +11,43 @@
 </head>
 <body>
   <div id="gate" class="gate">
-    <div class="card login-card" id="login-card">
+    <article class="card public-card home-card" id="public-home">
+      <p class="eyebrow">Knics</p>
+      <h1>Your personal AI console</h1>
+      <p class="note home-lede">Talk to an agent, run schedules, manage email, and keep usage in view — all tied to your own account.</p>
+      <div class="home-actions">
+        <button type="button" class="primary-cta" data-public="login">Sign in</button>
+        <a class="ghost-cta" href="#home-features">See features</a>
+      </div>
+      <div class="home-features" id="home-features">
+        <p class="eyebrow">Key features</p>
+        <ul class="feature-list">
+          <li>
+            <strong>Talk</strong>
+            <span>Chat with your agent for reminders, digests, and day-to-day help.</span>
+          </li>
+          <li>
+            <strong>Schedules</strong>
+            <span>Heartbeat jobs for news digests, reminders, and custom prompts.</span>
+          </li>
+          <li>
+            <strong>Email</strong>
+            <span>Connect a mailbox for digests and account-scoped mail settings.</span>
+          </li>
+          <li>
+            <strong>Usage</strong>
+            <span>See token use and cost for your conversations in one place.</span>
+          </li>
+        </ul>
+      </div>
+      <div class="home-close">
+        <p class="eyebrow">Get started</p>
+        <p class="note">Sign in with Google to open your console.</p>
+        <button type="button" class="primary-cta" data-public="login">Continue to sign in</button>
+      </div>
+    </article>
+    <div class="card login-card" id="login-card" hidden>
+      <button type="button" class="ghost public-back" data-public-back>Back to home</button>
       <p class="eyebrow">Knics</p>
       <h1>Sign in with Google</h1>
       <p class="note">Use your Google account to open the console.</p>
@@ -19,7 +55,7 @@
       <p id="login-status" class="status"></p>
     </div>
     <article class="card public-card" id="public-about" hidden>
-      <button type="button" class="ghost public-back" data-public-back>Back to sign in</button>
+      <button type="button" class="ghost public-back" data-public-back>Back to home</button>
       <p class="eyebrow">About</p>
       <h1>Who we are</h1>
       <div class="prose">
@@ -28,7 +64,7 @@
       </div>
     </article>
     <article class="card public-card" id="public-privacy" hidden>
-      <button type="button" class="ghost public-back" data-public-back>Back to sign in</button>
+      <button type="button" class="ghost public-back" data-public-back>Back to home</button>
       <p class="eyebrow">Legal</p>
       <h1>Privacy</h1>
       <div class="prose">
@@ -38,7 +74,7 @@
       </div>
     </article>
     <article class="card public-card" id="public-contact" hidden>
-      <button type="button" class="ghost public-back" data-public-back>Back to sign in</button>
+      <button type="button" class="ghost public-back" data-public-back>Back to home</button>
       <p class="eyebrow">Support</p>
       <h1>Contact us</h1>
       <div class="prose">

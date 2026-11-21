@@ -177,23 +177,29 @@ $("user-sheet")?.addEventListener("click", (event) => {
 $("brand-user")?.addEventListener("click", openUserSheet);
 
 function showPublicPage(page) {
+  const next = page || "home";
   const loginCard = $("login-card");
-  if (loginCard) loginCard.hidden = Boolean(page);
-  ["about", "privacy", "contact"].forEach((name) => {
+  if (loginCard) loginCard.hidden = next !== "login";
+  ["home", "about", "privacy", "contact"].forEach((name) => {
     const node = $(`public-${name}`);
-    if (node) node.hidden = name !== page;
+    if (node) node.hidden = name !== next;
   });
+  if (next === "login") mountGoogleLogin();
 }
 
 function hidePublicPages() {
-  showPublicPage(null);
+  showPublicPage("home");
 }
 
 document.querySelectorAll(".footer-link[data-panel]").forEach((button) => {
   button.addEventListener("click", () => show(button.dataset.panel));
 });
-document.querySelectorAll(".footer-link[data-public]").forEach((button) => {
-  button.addEventListener("click", () => showPublicPage(button.dataset.public));
+document.querySelectorAll("[data-public]").forEach((button) => {
+  button.addEventListener("click", (event) => {
+    if (button.tagName === "A" && button.getAttribute("href")?.startsWith("#")) return;
+    event.preventDefault();
+    showPublicPage(button.dataset.public);
+  });
 });
 document.querySelectorAll("[data-public-back]").forEach((button) => {
   button.addEventListener("click", hidePublicPages);
@@ -237,10 +243,9 @@ function showGate() {
   document.body.classList.remove("authed");
   closeMenu();
   closeUserSheet();
-  hidePublicPages();
   const slot = $("google-login");
   if (slot) slot.dataset.ready = "";
-  mountGoogleLogin();
+  showPublicPage("home");
 }
 
 function loadGoogleScript() {
