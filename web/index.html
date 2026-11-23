@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>Knics</title>
+  <title>KnicsClaw</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,520;9..144,650&family=Outfit:wght@380;500;640&display=swap" rel="stylesheet" />
@@ -12,7 +12,7 @@
 <body>
   <div id="gate" class="gate">
     <article class="card public-card home-card" id="public-home">
-      <p class="eyebrow">Knics</p>
+      <p class="eyebrow">KnicsClaw</p>
       <h1>Your personal AI console</h1>
       <p class="note home-lede">Talk to an agent, run schedules, manage email, and keep usage in view — all tied to your own account.</p>
       <div class="home-actions">
@@ -48,7 +48,7 @@
     </article>
     <div class="card login-card" id="login-card" hidden>
       <button type="button" class="ghost public-back" data-public-back>Back to home</button>
-      <p class="eyebrow">Knics</p>
+      <p class="eyebrow">KnicsClaw</p>
       <h1>Sign in with Google</h1>
       <p class="note">Use your Google account to open the console.</p>
       <div id="google-login" class="google-login"></div>
@@ -59,7 +59,7 @@
       <p class="eyebrow">About</p>
       <h1>Who we are</h1>
       <div class="prose">
-        <p>Knics is a personal AI console that helps you talk to an agent, run schedules, manage email, and keep your day on track — all tied to your own account.</p>
+        <p>KnicsClaw is a personal AI console that helps you talk to an agent, run schedules, manage email, and keep your day on track — all tied to your own account.</p>
         <p>We build tools that stay useful without getting in the way: clear conversation, reliable reminders, and settings that belong to you.</p>
       </div>
     </article>
@@ -78,7 +78,7 @@
       <p class="eyebrow">Support</p>
       <h1>Contact us</h1>
       <div class="prose">
-        <p>Need help with Knics, your account, or privacy requests?</p>
+        <p>Need help with KnicsClaw, your account, or privacy requests?</p>
         <p>Email us at <a href="mailto:hello@knics.app">hello@knics.app</a> and we will get back to you as soon as we can.</p>
       </div>
     </article>
@@ -88,7 +88,7 @@
       <button type="button" id="menu-toggle" class="menu-toggle" aria-label="Open menu" aria-expanded="false" aria-controls="mobile-menu">
         <span class="menu-toggle-bars" aria-hidden="true"></span>
       </button>
-      <a class="mobile-wordmark" href="#talk" id="mobile-home">KNICS</a>
+      <a class="mobile-wordmark" href="#talk" id="mobile-home">KnicsClaw</a>
       <button type="button" id="user-toggle" class="mobile-account-btn" aria-label="Account" aria-expanded="false" aria-controls="user-sheet">
         <img id="user-avatar-img" alt="" hidden />
         <span id="user-avatar-fallback" class="user-avatar-fallback">U</span>
@@ -113,7 +113,7 @@
       <div class="brand">
         <span class="mark">K</span>
         <div>
-          <strong>Knics</strong>
+          <strong>KnicsClaw</strong>
           <small id="brand-user"></small>
           <small id="brand-model">loading…</small>
         </div>
@@ -218,6 +218,7 @@
 
         <div class="chip-row" id="settings-tabs" role="tablist" aria-label="Settings sections">
           <button type="button" class="chip" data-settings-tab="profile">Profile</button>
+          <button type="button" class="chip" data-settings-tab="notifications">Notifications</button>
           <button type="button" class="chip" data-settings-tab="email">Email</button>
           <button type="button" class="chip admin-only" data-settings-tab="users" hidden>Users</button>
           <button type="button" class="chip admin-only" data-settings-tab="models" hidden>Models</button>
@@ -238,7 +239,7 @@
               <ol class="profile-steps note">
                 <li>Save your Telegram phone number here (with country code).</li>
                 <li>
-                  Open <a id="profile-bot-link" href="#" target="_blank" rel="noreferrer">the Knics Telegram bot</a>
+                  Open <a id="profile-bot-link" href="#" target="_blank" rel="noreferrer">the KnicsClaw Telegram bot</a>
                   and send <code>hi</code>.
                 </li>
                 <li>Share the same phone number when the bot asks.</li>
@@ -251,6 +252,30 @@
               <button type="submit">Save profile</button>
               <button type="button" id="profile-telegram-test" class="ghost">Send test message</button>
               <span id="profile-status" class="status"></span>
+            </div>
+          </form>
+        </div>
+
+        <div class="settings-pane" id="settings-pane-notifications" data-settings-pane="notifications" hidden>
+          <form id="notifications-form" class="card form-grid">
+            <fieldset class="wide toggle-set">
+              <legend>Channels</legend>
+              <label class="toggle-row">
+                <span>Email notifications</span>
+                <input name="notify_email" type="checkbox" />
+              </label>
+              <label class="toggle-row">
+                <span>Telegram notifications</span>
+                <input name="notify_telegram" type="checkbox" />
+              </label>
+            </fieldset>
+            <p class="wide note">
+              Turn channels on or off independently. Telegram must be linked under Profile before Telegram alerts arrive.
+              Login codes still send on Telegram when you request them.
+            </p>
+            <div class="form-actions">
+              <button type="submit">Save notifications</button>
+              <span id="notifications-status" class="status"></span>
             </div>
           </form>
         </div>
@@ -431,7 +456,7 @@
           </div>
         </header>
         <div class="card prose">
-          <p>Knics is a personal AI console that helps you talk to an agent, run schedules, manage email, and keep your day on track — all tied to your own account.</p>
+          <p>KnicsClaw is a personal AI console that helps you talk to an agent, run schedules, manage email, and keep your day on track — all tied to your own account.</p>
           <p>We build tools that stay useful without getting in the way: clear conversation, reliable reminders, and settings that belong to you.</p>
         </div>
       </section>
@@ -458,7 +483,7 @@
           </div>
         </header>
         <div class="card prose">
-          <p>Need help with Knics, your account, or privacy requests?</p>
+          <p>Need help with KnicsClaw, your account, or privacy requests?</p>
           <p>Email us at <a href="mailto:hello@knics.app">hello@knics.app</a> and we will get back to you as soon as we can.</p>
         </div>
       </section>
@@ -470,7 +495,7 @@
         <button type="button" class="footer-link" data-panel="privacy">Privacy</button>
         <button type="button" class="footer-link" data-panel="contact">Contact us</button>
       </nav>
-      <p class="footer-copy">Knics@2026</p>
+      <p class="footer-copy">KnicsClaw@2026</p>
     </footer>
   </div>
 
@@ -480,7 +505,7 @@
       <button type="button" class="footer-link" data-public="privacy">Privacy</button>
       <button type="button" class="footer-link" data-public="contact">Contact us</button>
     </nav>
-    <p class="footer-copy">Knics@2026</p>
+    <p class="footer-copy">KnicsClaw@2026</p>
   </footer>
 
   <script src="/static/app.js"></script>

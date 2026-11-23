@@ -37,6 +37,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+BRAND_NAME = "KnicsClaw"
 _BOT_PUBLIC: dict[str, str] | None = None
 
 
@@ -128,8 +129,8 @@ def format_html_card(
     Line items may already include safe HTML (caller responsibility).
     """
     parts: list[str] = []
-    if badge:
-        parts.append(f"<b>{escape_html(badge)}</b>")
+    brand = badge or BRAND_NAME
+    parts.append(f"<b>{escape_html(brand)}</b>")
     if title:
         parts.append(f"<b>{escape_html(title)}</b>")
     if subtitle:
@@ -165,8 +166,30 @@ def format_plain_to_html(text: str) -> str:
         raw,
     )
 
+    # Markdown links [label](url) before escaping.
+    links: list[tuple[str, str]] = []
+
+    def _stash_link(match: re.Match[str]) -> str:
+        links.append((match.group(1), match.group(2)))
+        return f"\x00LINK{len(links) - 1}\x00"
+
+    protected = re.sub(
+        r"\[([^\]]+)\]\((https?://[^)\s]+)\)",
+        _stash_link,
+        protected,
+    )
+
     # Escape remaining text.
     escaped = escape_html(protected)
+
+    # Headings at line start: # Title
+    escaped = re.sub(
+        r"(?m)^#{1,6}\s+(.+)$",
+        lambda m: f"<b>{m.group(1).strip()}</b>",
+        escaped,
+    )
+    # Bullets
+    escaped = re.sub(r"(?m)^(?:[-*]|\d+\.)\s+", "• ", escaped)
 
     # Inline code
     escaped = re.sub(
@@ -174,18 +197,27 @@ def format_plain_to_html(text: str) -> str:
         lambda m: f"<code>{m.group(1)}</code>",
         escaped,
     )
-    # Bold **...**
+    # Bold **...** or __...__
     escaped = re.sub(
-        r"\*\*([^*]+)\*\*",
-        lambda m: f"<b>{m.group(1)}</b>",
+        r"\*\*([^*]+)\*\*|__([^_]+)__",
+        lambda m: f"<b>{m.group(1) or m.group(2)}</b>",
         escaped,
     )
-    # Italic *...* (avoid matching bold leftovers)
+    # Italic *...* or _..._ (avoid matching bold leftovers)
     escaped = re.sub(
-        r"(?<!\*)\*([^*\n]+)\*(?!\*)",
-        lambda m: f"<i>{m.group(1)}</i>",
+        r"(?<!\*)\*([^*\n]+)\*(?!\*)|(?<!_)_([^_\n]+)_(?!_)",
+        lambda m: f"<i>{m.group(1) or m.group(2)}</i>",
         escaped,
     )
+
+    # Restore links
+    for index, (label, url) in enumerate(links):
+        safe_url = escape_html(url)
+        safe_label = escape_html(label)
+        escaped = escaped.replace(
+            f"\x00LINK{index}\x00",
+            f'<a href="{safe_url}">{safe_label}</a>',
+        )
 
     # Restore fenced blocks as <pre>
     for index, body in enumerate(fences):
@@ -195,6 +227,24 @@ def format_plain_to_html(text: str) -> str:
         )
 
     return escaped[:4000]
+
+
+def format_rich_message(
+    text: str,
+    *,
+    title: str = "",
+    subtitle: str = "",
+    footer: str = "",
+) -> str:
+    """Brand + title + HTML body for outbound Telegram messages."""
+    body = format_plain_to_html(text)
+    return format_html_card(
+        badge=BRAND_NAME,
+        title=title,
+        subtitle=subtitle,
+        lines=[body] if body else None,
+        footer=footer,
+    )
 
 
 def bot_public_identity() -> dict[str, str]:
@@ -277,18 +327,19 @@ def _api_call(method: str, **fields: Any) -> dict[str, Any]:
 
     url = f"https://api.telegram.org/bot{token}/{method}"
     try:
-        data = None
         cleaned: dict[str, Any] = {}
         for key, value in fields.items():
             if value is None:
                 continue
-            if isinstance(value, bool):
-                cleaned[key] = "true" if value else "false"
-            else:
-                cleaned[key] = value
-        if cleaned:
-            data = urllib.parse.urlencode(cleaned).encode("utf-8")
-        req = urllib.request.Request(url, data=data, method="POST" if data else "GET")
+            cleaned[key] = value
+        # JSON body keeps HTML parse_mode content intact (unlike form encoding quirks).
+        data = json.dumps(cleaned).encode("utf-8") if cleaned else None
+        req = urllib.request.Request(
+            url,
+            data=data,
+            method="POST" if data else "GET",
+            headers={"Content-Type": "application/json"} if data else {},
+        )
         ctx = _urllib_ssl_context()
         with urllib.request.urlopen(req, timeout=30, context=ctx) as resp:
             return json.loads(resp.read().decode("utf-8"))
@@ -322,6 +373,8 @@ class TelegramBotHandler:
         reply_markup: dict[str, Any] | None = None,
         parse_mode: str | None = "HTML",
         html: bool = False,
+        title: str = "",
+        rich: bool = True,
     ) -> dict[str, Any]:
         from accounts import chat_for_send
 
@@ -332,17 +385,21 @@ class TelegramBotHandler:
         text = str(message or "")[:4000]
         mode = parse_mode
         if mode == "HTML" and not html:
-            text = format_plain_to_html(text)
+            text = (
+                format_rich_message(text, title=title)
+                if rich
+                else format_plain_to_html(text)
+            )
         elif mode == "none":
             mode = None
 
         result = _api_call(
             "sendMessage",
             chat_id=target,
-            text=text,
+            text=text[:4000],
             parse_mode=mode,
             disable_web_page_preview=True,
-            reply_markup=json.dumps(reply_markup) if reply_markup else None,
+            reply_markup=reply_markup,
         )
         if result.get("ok"):
             return {
@@ -350,6 +407,29 @@ class TelegramBotHandler:
                 "chat_id": target,
                 "message_id": ((result.get("result") or {}).get("message_id")),
             }
+        # If Telegram rejects HTML, fall back once with escaped plain text.
+        if mode == "HTML" and not result.get("ok"):
+            plain = escape_html(str(message or ""))[:4000]
+            fallback = format_html_card(
+                badge=BRAND_NAME,
+                title=title or "Message",
+                lines=[plain] if plain else None,
+            )
+            retry = _api_call(
+                "sendMessage",
+                chat_id=target,
+                text=fallback[:4000],
+                parse_mode="HTML",
+                disable_web_page_preview=True,
+                reply_markup=reply_markup,
+            )
+            if retry.get("ok"):
+                return {
+                    "ok": True,
+                    "chat_id": target,
+                    "message_id": ((retry.get("result") or {}).get("message_id")),
+                }
+            result = retry
         return {
             "ok": False,
             "error": result.get("error") or result.get("description") or str(result),
@@ -493,7 +573,7 @@ def configure_webhook() -> dict[str, Any]:
         url=url,
         secret_token=webhook_secret() or None,
         drop_pending_updates=False,
-        allowed_updates=json.dumps(["message"]),
+        allowed_updates=["message"],
     )
     if result.get("ok"):
         logger.info("Telegram webhook registered → %s", url)
@@ -590,7 +670,7 @@ def dispatch_update(
             if not private:
                 bot_handler.send_html(
                     format_html_card(
-                        badge="Knics",
+                        badge=BRAND_NAME,
                         title="Private chat required",
                         lines=["Linking only works in a private chat with the bot."],
                     ),
@@ -602,7 +682,7 @@ def dispatch_update(
             except ValueError as exc:
                 bot_handler.send_html(
                     format_html_card(
-                        badge="Knics",
+                        badge=BRAND_NAME,
                         title="Invalid phone",
                         lines=[
                             escape_html(str(exc)),
@@ -615,7 +695,7 @@ def dispatch_update(
             except LookupError as exc:
                 bot_handler.send_html(
                     format_html_card(
-                        badge="Knics",
+                        badge=BRAND_NAME,
                         title="Phone not found",
                         lines=[escape_html(str(exc))],
                     ),
@@ -626,8 +706,8 @@ def dispatch_update(
             print("[telegram] phone linked to web account", flush=True)
             bot_handler.send_html(
                 format_html_card(
-                    badge="Linked",
-                    title="Knics connected",
+                    badge=BRAND_NAME,
+                    title="Linked",
                     subtitle=str(linked_user.get("name") or ""),
                     lines=[
                         "Reminders and agent notifications will arrive here.",
@@ -643,7 +723,7 @@ def dispatch_update(
             if contact_user and contact_user != user_id:
                 bot_handler.send_html(
                     format_html_card(
-                        badge="Knics",
+                        badge=BRAND_NAME,
                         title="Share your own number",
                         lines=["Use the button to share <b>your</b> Telegram phone."],
                     ),
@@ -668,7 +748,7 @@ def dispatch_update(
             if existing and str(existing.get("phone") or "").strip():
                 bot_handler.send_html(
                     format_html_card(
-                        badge="Knics",
+                        badge=BRAND_NAME,
                         title="Already linked",
                         subtitle=str(existing.get("name") or ""),
                         lines=["Notifications will continue to arrive in this chat."],
@@ -678,11 +758,11 @@ def dispatch_update(
                 return
             bot_handler.send_html(
                 format_html_card(
-                    badge="Knics",
+                    badge=BRAND_NAME,
                     title="Welcome",
                     lines=[
                         "<b>Link notifications in 2 steps:</b>",
-                        "1. Save your Telegram phone in Knics → Settings → Profile",
+                        "1. Save your Telegram phone in KnicsClaw → Settings → Profile",
                         "2. Share that same number here (button below) or type it with country code",
                     ],
                 ),
@@ -704,7 +784,10 @@ def dispatch_update(
             logger.exception("Agent error from Telegram")
             reply = f"Error: {exc}"
         body = (reply or "(no reply)").strip()
-        bot_handler.send(body, chat_id=chat_id)
+        bot_handler.send_html(
+            format_rich_message(body, title="Reply"),
+            chat_id=chat_id,
+        )
     finally:
         reset_reply_chat(reply_token)
         reset_user(user_token)

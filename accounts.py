@@ -131,6 +131,36 @@ def is_admin(user: dict[str, Any] | None) -> bool:
     return normalize_role((user or {}).get("role")) == "admin"
 
 
+def _flag(value: Any, default: bool = True) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() not in {"0", "false", "no", "off", ""}
+
+
+def wants_email_notify(user_id: str | None = None) -> bool:
+    from user_scope import current_user_id
+
+    uid = user_id or current_user_id()
+    if not uid:
+        return False
+    user = get_user(uid)
+    return bool(user) and _flag(user.get("notify_email"), True)
+
+
+def wants_telegram_notify(user_id: str | None = None) -> bool:
+    from user_scope import current_user_id
+
+    uid = user_id or current_user_id()
+    if not uid:
+        return False
+    user = get_user(uid)
+    if not user or not _flag(user.get("notify_telegram"), True):
+        return False
+    return bool(str(user.get("chat_id") or "").strip())
+
+
 def public_user(user: dict[str, Any], *, reveal_phone: bool = False) -> dict[str, Any]:
     phone = str(user.get("phone") or "")
     masked = phone
@@ -147,6 +177,8 @@ def public_user(user: dict[str, Any], *, reveal_phone: bool = False) -> dict[str
         "phone": masked if not reveal_phone else phone,
         "phone_linked": bool(phone),
         "telegram_linked": bool(chat_id and phone),
+        "notify_email": _flag(user.get("notify_email"), True),
+        "notify_telegram": _flag(user.get("notify_telegram"), True),
         "role": role,
         "is_admin": role == "admin",
         "auth_provider": user.get("auth_provider")
@@ -196,8 +228,10 @@ def update_profile(
     *,
     name: str | None = None,
     phone: str | None = None,
+    notify_email: bool | None = None,
+    notify_telegram: bool | None = None,
 ) -> dict[str, Any]:
-    """Update display name / Telegram phone. Changing phone clears chat link."""
+    """Update display name / Telegram phone / notification prefs."""
     user_id = _safe_user_id(user_id)
     current = get_user(user_id)
     if not current:
@@ -209,6 +243,14 @@ def update_profile(
     if name is not None:
         updates.append("name = %s")
         params.append(str(name or "").strip())
+
+    if notify_email is not None:
+        updates.append("notify_email = %s")
+        params.append(bool(notify_email))
+
+    if notify_telegram is not None:
+        updates.append("notify_telegram = %s")
+        params.append(bool(notify_telegram))
 
     if phone is not None:
         raw = str(phone or "").strip()
@@ -254,7 +296,7 @@ def link_chat_by_phone(phone: str, chat_id: str) -> dict[str, Any]:
     user = find_by_phone(phone)
     if not user:
         raise LookupError(
-            "No Knics account has that phone yet. Save it under Settings, then share it here again."
+            "No KnicsClaw account has that phone yet. Save it under Settings, then share it here again."
         )
     owner_id = str(user["user_id"])
     # One chat maps to one account — clear stale copies (e.g. telegram-only rows).
@@ -274,7 +316,7 @@ def link_chat_by_phone(phone: str, chat_id: str) -> dict[str, Any]:
 
 
 def send_telegram_test_for_user(user_id: str) -> dict[str, Any]:
-    from channels.telegram import bot_handler, format_html_card
+    from channels.telegram import BRAND_NAME, bot_handler, format_html_card
 
     user = get_user(user_id)
     if not user:
@@ -287,7 +329,7 @@ def send_telegram_test_for_user(user_id: str) -> dict[str, Any]:
         )
     result = bot_handler.send_html(
         format_html_card(
-            badge="Knics",
+            badge=BRAND_NAME,
             title="Test message",
             subtitle=f"Hello {user.get('name') or 'there'}",
             lines=[
@@ -501,11 +543,11 @@ def request_otp(phone: str) -> None:
             "attempts": 0,
             "sent_at": now,
         }
-    from channels.telegram import bot_handler, escape_html, format_html_card
+    from channels.telegram import BRAND_NAME, bot_handler, escape_html, format_html_card
 
     result = bot_handler.send_html(
         format_html_card(
-            badge="Knics",
+            badge=BRAND_NAME,
             title="Login code",
             lines=[
                 f"Your code is <code>{escape_html(code)}</code>",

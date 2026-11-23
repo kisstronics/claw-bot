@@ -468,7 +468,7 @@ def _mark_sent(keys: list[str], today: date) -> None:
 
 
 def _format_message(items: list[dict[str, Any]], today: date) -> str:
-    from channels.telegram import escape_html, format_html_card
+    from channels.telegram import BRAND_NAME, escape_html, format_html_card
 
     body_lines: list[str] = []
     for item in items:
@@ -476,8 +476,9 @@ def _format_message(items: list[dict[str, Any]], today: date) -> str:
         if item.get("hour") is not None:
             suffix = f" ({int(item['hour']):02d}:{int(item.get('minute') or 0):02d})"
         body_lines.append(f"• {escape_html(str(item['text']))}{escape_html(suffix)}")
+
     return format_html_card(
-        badge="Knics",
+        badge=BRAND_NAME,
         title="Reminders",
         subtitle=today.strftime("%d %b %Y"),
         lines=body_lines,
@@ -536,6 +537,19 @@ def run_reminders(*, dry_run: bool = False, now: datetime | None = None) -> dict
             "ok": True,
             "notified": False,
             "dry_run": True,
+            "count": len(pending),
+            "date": today.isoformat(),
+            "message": message,
+            "items": items,
+        }
+
+    from accounts import wants_telegram_notify
+
+    if not wants_telegram_notify():
+        return {
+            "ok": True,
+            "notified": False,
+            "reason": "telegram_notifications_disabled",
             "count": len(pending),
             "date": today.isoformat(),
             "message": message,

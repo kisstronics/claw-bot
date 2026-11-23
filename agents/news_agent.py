@@ -280,6 +280,19 @@ def run_news_digest(
             "items": items,
         }
 
+    from accounts import wants_email_notify
+
+    if not wants_email_notify():
+        return {
+            "ok": True,
+            "emailed": False,
+            "reason": "email_notifications_disabled",
+            "count": len(items),
+            "subject": subject,
+            "body": body,
+            "items": items,
+        }
+
     mail_result = send_email(subject=subject, body=body, to_addr=recipient)
     if not mail_result.get("ok"):
         return {

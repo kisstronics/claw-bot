@@ -97,6 +97,8 @@ CREATE TABLE IF NOT EXISTS {SCHEMA}.users (
     auth_provider TEXT NOT NULL DEFAULT '',
     google_sub TEXT NOT NULL DEFAULT '',
     role TEXT NOT NULL DEFAULT 'user',
+    notify_email BOOLEAN NOT NULL DEFAULT TRUE,
+    notify_telegram BOOLEAN NOT NULL DEFAULT TRUE,
     provider TEXT NOT NULL DEFAULT '',
     model_id TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -295,6 +297,8 @@ def fetch_all(sql: str, params: tuple | dict | None = None) -> list[dict[str, An
 
 MIGRATIONS = [
     f"ALTER TABLE {SCHEMA}.users ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'user'",
+    f"ALTER TABLE {SCHEMA}.users ADD COLUMN IF NOT EXISTS notify_email BOOLEAN NOT NULL DEFAULT TRUE",
+    f"ALTER TABLE {SCHEMA}.users ADD COLUMN IF NOT EXISTS notify_telegram BOOLEAN NOT NULL DEFAULT TRUE",
     f"""
     CREATE TABLE IF NOT EXISTS {SCHEMA}.daily_usage (
         user_id TEXT NOT NULL REFERENCES {SCHEMA}.users(user_id) ON DELETE CASCADE,

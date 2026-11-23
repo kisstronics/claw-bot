@@ -19,7 +19,7 @@ function show(panel) {
     panel = "talk";
   }
   // Legacy deep-links from older nav labels.
-  if (["users", "models", "appconfig", "email", "telegram", "profile"].includes(panel)) {
+  if (["users", "models", "appconfig", "email", "telegram", "profile", "notifications"].includes(panel)) {
     state.settingsTab = panel;
     panel = "settings";
   }
@@ -48,6 +48,7 @@ function showSettingsTab(tab) {
     node.hidden = node.dataset.settingsPane !== next;
   });
   if (next === "profile") loadProfile();
+  if (next === "notifications") loadNotifications();
   if (next === "users") loadUsers();
   if (next === "models") loadSettings();
   if (next === "appconfig") loadAppConfig();
@@ -830,7 +831,7 @@ function fillProfileForm(data) {
       botLink.hidden = false;
     } else {
       botLink.removeAttribute("href");
-      botLink.textContent = "the Knics Telegram bot";
+      botLink.textContent = "the KnicsClaw Telegram bot";
     }
   }
 
@@ -839,7 +840,38 @@ function fillProfileForm(data) {
 
   const testBtn = $("profile-telegram-test");
   if (testBtn) testBtn.disabled = !telegram.linked;
+
+  const notifForm = $("notifications-form");
+  if (notifForm) {
+    notifForm.notify_email.checked = user.notify_email !== false;
+    notifForm.notify_telegram.checked = user.notify_telegram !== false;
+  }
 }
+
+async function loadNotifications() {
+  const data = await api("/api/profile");
+  fillProfileForm(data);
+  $("notifications-status").textContent = "";
+}
+
+$("notifications-form")?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  $("notifications-status").textContent = "Saving…";
+  try {
+    const saved = await api("/api/profile", {
+      method: "PUT",
+      body: JSON.stringify({
+        notify_email: form.notify_email.checked,
+        notify_telegram: form.notify_telegram.checked,
+      }),
+    });
+    fillProfileForm(saved);
+    $("notifications-status").textContent = "Saved";
+  } catch (error) {
+    $("notifications-status").textContent = error.message;
+  }
+});
 
 async function loadProfile() {
   const data = await api("/api/profile");
