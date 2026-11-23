@@ -38,6 +38,10 @@ from channels.telegram import (
     bot_handler,
     configure_webhook,
     dispatch_update,
+    format_html_card,
+    get_admin_settings as get_telegram_settings,
+    send_to_linked_phone,
+    update_settings as update_telegram_settings,
     webhook_secret_ok,
 )
 from models import (
@@ -215,6 +219,17 @@ class EmailUpdate(BaseModel):
     smtp_server: str = "smtp.gmail.com"
     smtp_port: int = Field(default=587, ge=1, le=65535)
     news_to: str = ""
+
+
+class TelegramSettingsUpdate(BaseModel):
+    enabled: bool | None = None
+    botToken: str | None = None
+    webhookUrl: str | None = None
+    webhookSecret: str | None = None
+
+
+class TelegramTestRequest(BaseModel):
+    phone: str = Field(..., min_length=1)
 
 
 class ScheduleWrite(BaseModel):
@@ -404,12 +419,61 @@ def write_app_config(body: AppConfigUpdate) -> dict[str, Any]:
         key = str(key or "").strip()
         if key not in db.ADMIN_CONFIG_KEYS:
             raise HTTPException(status_code=400, detail=f"Unknown config key: {key}")
+        if key in db.TELEGRAM_SETTINGS_KEYS:
+            raise HTTPException(
+                status_code=400,
+                detail="Use Settings → Telegram to manage Telegram keys.",
+            )
         # Skip blank secret fields so masked placeholders do not wipe keys.
         if key in db.SECRET_CONFIG_KEYS and str(value or "").strip() == "":
             continue
         db.set_config(key, str(value if value is not None else ""))
         updated.append(key)
     return {"ok": True, "updated": updated, "items": db.list_app_config(mask_secrets=True)}
+
+
+@app.get("/api/admin/telegram")
+def read_telegram_settings() -> dict[str, Any]:
+    _require_admin()
+    return get_telegram_settings()
+
+
+@app.put("/api/admin/telegram")
+def write_telegram_settings(body: TelegramSettingsUpdate) -> dict[str, Any]:
+    _require_admin()
+    try:
+        return update_telegram_settings(
+            enabled=body.enabled,
+            bot_token_value=body.botToken,
+            webhook_url_value=body.webhookUrl,
+            webhook_secret_value=body.webhookSecret,
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/admin/telegram/test")
+def admin_telegram_test(body: TelegramTestRequest) -> dict[str, Any]:
+    _require_admin()
+    result = send_to_linked_phone(
+        body.phone,
+        format_html_card(
+            badge="Knics",
+            title="Admin test message",
+            lines=["Your phone + chat link is working."],
+        ),
+    )
+    if not result.get("ok"):
+        raise HTTPException(
+            status_code=400,
+            detail=result.get("error") or "No linked user found for that phone",
+        )
+    return {
+        "ok": True,
+        "message": "Test message sent on Telegram",
+        "userId": result.get("user_id"),
+        "chatId": result.get("chat_id"),
+    }
 
 
 @app.get("/api/admin/dashboard")

@@ -100,10 +100,7 @@
         <button class="mobile-nav-link active" data-panel="talk" type="button">Talk</button>
         <button class="mobile-nav-link" data-panel="schedules" type="button">Schedules</button>
         <button class="mobile-nav-link admin-only" data-panel="dashboard" type="button" hidden>Dashboard</button>
-        <button class="mobile-nav-link admin-only" data-panel="users" type="button" hidden>Users</button>
-        <button class="mobile-nav-link admin-only" data-panel="models" type="button" hidden>Models</button>
-        <button class="mobile-nav-link admin-only" data-panel="appconfig" type="button" hidden>App config</button>
-        <button class="mobile-nav-link" data-panel="email" type="button">Email</button>
+        <button class="mobile-nav-link" data-panel="settings" type="button">Settings</button>
         <button class="mobile-nav-link" data-panel="usage" type="button">Usage</button>
       </nav>
       <div class="mobile-menu-footer">
@@ -125,14 +122,11 @@
         <button class="nav active" data-panel="talk">Talk</button>
         <button class="nav" data-panel="schedules">Schedules</button>
         <button class="nav admin-only" data-panel="dashboard" hidden>Dashboard</button>
-        <button class="nav admin-only" data-panel="users" hidden>Users</button>
-        <button class="nav admin-only" data-panel="models" hidden>Models</button>
-        <button class="nav admin-only" data-panel="appconfig" hidden>App config</button>
-        <button class="nav" data-panel="email">Email</button>
+        <button class="nav" data-panel="settings">Settings</button>
         <button class="nav" data-panel="usage">Usage</button>
       </nav>
       <button id="logout" class="ghost" type="button">Log out</button>
-      <p class="aside-note">Memory, schedules, and email stay with your Google account.</p>
+      <p class="aside-note">Memory, schedules, and settings stay with your Google account.</p>
     </aside>
 
     <div class="user-sheet" id="user-sheet" hidden>
@@ -214,134 +208,161 @@
         <p class="note">User counts exclude the internal system account.</p>
       </section>
 
-      <section id="users" class="panel">
+      <section id="settings" class="panel">
         <header class="panel-head">
           <div>
-            <p class="eyebrow">Admin</p>
-            <h1>Users</h1>
+            <p class="eyebrow">Control</p>
+            <h1>Settings</h1>
           </div>
         </header>
-        <form id="users-filter" class="card form-grid">
-          <label class="wide">Search
-            <input name="q" placeholder="Name, email, username, or id" />
-          </label>
-          <label>Role
-            <select name="role">
-              <option value="">All roles</option>
-              <option value="user">user</option>
-              <option value="admin">admin</option>
-            </select>
-          </label>
-          <label>Sort
-            <select name="sort">
-              <option value="created_at">Created</option>
-              <option value="updated_at">Updated</option>
-              <option value="name">Name</option>
-              <option value="email">Email</option>
-              <option value="role">Role</option>
-            </select>
-          </label>
-          <label>Order
-            <select name="order">
-              <option value="desc">Descending</option>
-              <option value="asc">Ascending</option>
-            </select>
-          </label>
-          <div class="form-actions">
-            <button type="submit">Apply</button>
-            <span id="users-meta" class="status"></span>
-          </div>
-        </form>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Email</th>
-                <th>Role</th>
-                <th>Auth</th>
-                <th>Created</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody id="users-rows"></tbody>
-          </table>
+
+        <div class="chip-row" id="settings-tabs" role="tablist" aria-label="Settings sections">
+          <button type="button" class="chip admin-only" data-settings-tab="users" hidden>Users</button>
+          <button type="button" class="chip admin-only" data-settings-tab="models" hidden>Models</button>
+          <button type="button" class="chip admin-only" data-settings-tab="appconfig" hidden>App config</button>
+          <button type="button" class="chip" data-settings-tab="email">Email</button>
+          <button type="button" class="chip admin-only" data-settings-tab="telegram" hidden>Telegram</button>
         </div>
-        <div class="pager">
-          <button type="button" id="users-prev" class="ghost">Previous</button>
-          <span id="users-page" class="note"></span>
-          <button type="button" id="users-next" class="ghost">Next</button>
+
+        <div class="settings-pane" id="settings-pane-users" data-settings-pane="users" hidden>
+          <form id="users-filter" class="card form-grid">
+            <label class="wide">Search
+              <input name="q" placeholder="Name, email, username, or id" />
+            </label>
+            <label>Role
+              <select name="role">
+                <option value="">All roles</option>
+                <option value="user">user</option>
+                <option value="admin">admin</option>
+              </select>
+            </label>
+            <label>Sort
+              <select name="sort">
+                <option value="created_at">Created</option>
+                <option value="updated_at">Updated</option>
+                <option value="name">Name</option>
+                <option value="email">Email</option>
+                <option value="role">Role</option>
+              </select>
+            </label>
+            <label>Order
+              <select name="order">
+                <option value="desc">Descending</option>
+                <option value="asc">Ascending</option>
+              </select>
+            </label>
+            <div class="form-actions">
+              <button type="submit">Apply</button>
+              <span id="users-meta" class="status"></span>
+            </div>
+          </form>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Email</th>
+                  <th>Role</th>
+                  <th>Auth</th>
+                  <th>Created</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="users-rows"></tbody>
+            </table>
+          </div>
+          <div class="pager">
+            <button type="button" id="users-prev" class="ghost">Previous</button>
+            <span id="users-page" class="note"></span>
+            <button type="button" id="users-next" class="ghost">Next</button>
+          </div>
         </div>
-      </section>
 
-      <section id="models" class="panel">
-        <header class="panel-head">
-          <div>
-            <p class="eyebrow">Runtime</p>
-            <h1>Model</h1>
-          </div>
-        </header>
-        <form id="model-form" class="card form-grid">
-          <label>Provider
-            <select name="provider" id="provider"></select>
-          </label>
-          <label>Model
-            <select name="model_pick" id="model-pick"></select>
-          </label>
-          <label class="wide">Model id
-            <input name="model_id" id="model-id" required placeholder="provider/model" />
-          </label>
-          <div class="form-actions">
-            <button type="submit">Use this model</button>
-            <span id="model-status" class="status"></span>
-          </div>
-        </form>
-      </section>
+        <div class="settings-pane" id="settings-pane-models" data-settings-pane="models" hidden>
+          <form id="model-form" class="card form-grid">
+            <label>Provider
+              <select name="provider" id="provider"></select>
+            </label>
+            <label>Model
+              <select name="model_pick" id="model-pick"></select>
+            </label>
+            <label class="wide">Model id
+              <input name="model_id" id="model-id" required placeholder="provider/model" />
+            </label>
+            <div class="form-actions">
+              <button type="submit">Use this model</button>
+              <span id="model-status" class="status"></span>
+            </div>
+          </form>
+        </div>
 
-      <section id="appconfig" class="panel">
-        <header class="panel-head">
-          <div>
-            <p class="eyebrow">Admin</p>
-            <h1>App configuration</h1>
-          </div>
-        </header>
-        <form id="appconfig-form" class="card form-grid"></form>
-        <p id="appconfig-status" class="status"></p>
-        <p class="note">These values are stored in Postgres schema <code>claw.app_config</code>. Leave secret fields blank to keep the current value.</p>
-      </section>
+        <div class="settings-pane" id="settings-pane-appconfig" data-settings-pane="appconfig" hidden>
+          <form id="appconfig-form" class="card form-grid"></form>
+          <p id="appconfig-status" class="status"></p>
+          <p class="note">These values are stored in Postgres schema <code>claw.app_config</code>. Leave secret fields blank to keep the current value. Telegram keys live under the Telegram tab.</p>
+        </div>
 
-      <section id="email" class="panel">
-        <header class="panel-head">
-          <div>
-            <p class="eyebrow">Mailbox</p>
-            <h1>Email</h1>
+        <div class="settings-pane" id="settings-pane-email" data-settings-pane="email" hidden>
+          <form id="email-form" class="card form-grid">
+            <label>Email
+              <input name="email" type="email" required placeholder="you@gmail.com" />
+            </label>
+            <label>App password
+              <input name="app_password" type="password" autocomplete="new-password" placeholder="Leave blank to keep the saved password" />
+            </label>
+            <label>IMAP server
+              <input name="imap_server" value="imap.gmail.com" required />
+            </label>
+            <label>SMTP server
+              <input name="smtp_server" value="smtp.gmail.com" required />
+            </label>
+            <label>SMTP port
+              <input name="smtp_port" type="number" min="1" max="65535" value="587" required />
+            </label>
+            <label>News recipient
+              <input name="news_to" type="email" placeholder="Where news digests go" />
+            </label>
+            <div class="form-actions">
+              <button type="submit">Save email</button>
+              <span id="email-status" class="status"></span>
+            </div>
+          </form>
+          <p class="note">These settings are used only for your account. A Gmail app password is stored on this machine, not in the browser after you save.</p>
+        </div>
+
+        <div class="settings-pane" id="settings-pane-telegram" data-settings-pane="telegram" hidden>
+          <form id="telegram-form" class="card form-grid">
+            <label class="wide toggle-row">
+              <span>Enable Telegram</span>
+              <input name="enabled" type="checkbox" />
+            </label>
+            <label class="wide">Bot token (from BotFather)
+              <input name="botToken" type="password" autocomplete="new-password" placeholder="123456:ABC…" />
+            </label>
+            <label class="wide">Webhook URL (public HTTPS)
+              <input name="webhookUrl" type="url" placeholder="https://your-host/telegram/webhook" />
+            </label>
+            <label class="wide">Webhook secret (optional)
+              <input name="webhookSecret" type="password" autocomplete="new-password" placeholder="Optional shared secret" />
+            </label>
+            <p id="telegram-bot-username" class="note wide"></p>
+            <div class="form-actions">
+              <button type="submit">Save Telegram settings</button>
+              <span id="telegram-status" class="status"></span>
+            </div>
+          </form>
+
+          <div class="card form-grid" style="margin-top: 16px;">
+            <p class="wide note">Send a test message to a user that has both phone and chat_id linked.</p>
+            <label class="wide">User phone
+              <input id="telegram-test-phone" type="tel" placeholder="+91…" />
+            </label>
+            <div class="form-actions">
+              <button type="button" id="telegram-test-send" class="ghost">Send test message</button>
+              <span id="telegram-test-status" class="status"></span>
+            </div>
           </div>
-        </header>
-        <form id="email-form" class="card form-grid">
-          <label>Email
-            <input name="email" type="email" required placeholder="you@gmail.com" />
-          </label>
-          <label>App password
-            <input name="app_password" type="password" autocomplete="new-password" placeholder="Leave blank to keep the saved password" />
-          </label>
-          <label>IMAP server
-            <input name="imap_server" value="imap.gmail.com" required />
-          </label>
-          <label>SMTP server
-            <input name="smtp_server" value="smtp.gmail.com" required />
-          </label>
-          <label>SMTP port
-            <input name="smtp_port" type="number" min="1" max="65535" value="587" required />
-          </label>
-          <label>News recipient
-            <input name="news_to" type="email" placeholder="Where news digests go" />
-          </label>
-          <div class="form-actions">
-            <button type="submit">Save email</button>
-            <span id="email-status" class="status"></span>
-          </div>
-        </form>
-        <p class="note">These settings are used only for your account. A Gmail app password is stored on this machine, not in the browser after you save.</p>
+        </div>
       </section>
 
       <section id="usage" class="panel">

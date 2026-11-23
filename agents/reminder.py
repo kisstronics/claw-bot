@@ -468,13 +468,20 @@ def _mark_sent(keys: list[str], today: date) -> None:
 
 
 def _format_message(items: list[dict[str, Any]], today: date) -> str:
-    lines = [f"Reminders for {today.strftime('%d %b %Y')}", ""]
+    from channels.telegram import escape_html, format_html_card
+
+    body_lines: list[str] = []
     for item in items:
         suffix = ""
         if item.get("hour") is not None:
             suffix = f" ({int(item['hour']):02d}:{int(item.get('minute') or 0):02d})"
-        lines.append(f"• {item['text']}{suffix}")
-    return "\n".join(lines)
+        body_lines.append(f"• {escape_html(str(item['text']))}{escape_html(suffix)}")
+    return format_html_card(
+        badge="Knics",
+        title="Reminders",
+        subtitle=today.strftime("%d %b %Y"),
+        lines=body_lines,
+    )
 
 
 def _public_item(event: dict[str, Any]) -> dict[str, Any]:
@@ -535,7 +542,7 @@ def run_reminders(*, dry_run: bool = False, now: datetime | None = None) -> dict
             "items": items,
         }
 
-    result = bot_handler.send(message)
+    result = bot_handler.send_html(message)
     if not result.get("ok"):
         return {
             "ok": False,

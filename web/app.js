@@ -3,15 +3,24 @@ const state = {
   settings: null,
   user: null,
   isAdmin: false,
+  settingsTab: "email",
   users: { page: 1, page_size: 20, q: "", role: "", sort: "created_at", order: "desc" },
+  telegram: null,
 };
 
 const $ = (id) => document.getElementById(id);
 
+const ADMIN_SETTINGS_TABS = new Set(["users", "models", "appconfig", "telegram"]);
+
 function show(panel) {
-  const adminPanels = new Set(["dashboard", "users", "models", "appconfig"]);
+  const adminPanels = new Set(["dashboard"]);
   if (adminPanels.has(panel) && !state.isAdmin) {
     panel = "talk";
+  }
+  // Legacy deep-links from older nav labels.
+  if (["users", "models", "appconfig", "email", "telegram"].includes(panel)) {
+    state.settingsTab = panel;
+    panel = "settings";
   }
   document.querySelectorAll(".panel").forEach((node) => node.classList.remove("visible"));
   document
@@ -21,11 +30,27 @@ function show(panel) {
   closeMenu();
   if (panel === "schedules") loadSchedules();
   if (panel === "dashboard") loadDashboard();
-  if (panel === "users") loadUsers();
-  if (panel === "models") loadSettings();
-  if (panel === "appconfig") loadAppConfig();
-  if (panel === "email") loadEmail();
+  if (panel === "settings") showSettingsTab(state.settingsTab);
   if (panel === "usage") loadUsage();
+}
+
+function showSettingsTab(tab) {
+  let next = tab || "email";
+  if (ADMIN_SETTINGS_TABS.has(next) && !state.isAdmin) {
+    next = "email";
+  }
+  state.settingsTab = next;
+  document.querySelectorAll("#settings-tabs .chip").forEach((node) => {
+    node.classList.toggle("active", node.dataset.settingsTab === next);
+  });
+  document.querySelectorAll("[data-settings-pane]").forEach((node) => {
+    node.hidden = node.dataset.settingsPane !== next;
+  });
+  if (next === "users") loadUsers();
+  if (next === "models") loadSettings();
+  if (next === "appconfig") loadAppConfig();
+  if (next === "email") loadEmail();
+  if (next === "telegram") loadTelegram();
 }
 
 function userInitials(user) {
@@ -144,6 +169,11 @@ function applyRoleUI(user) {
   document.querySelectorAll(".admin-only").forEach((node) => {
     node.hidden = !state.isAdmin;
   });
+  if (!state.isAdmin && ADMIN_SETTINGS_TABS.has(state.settingsTab)) {
+    state.settingsTab = "email";
+  } else if (state.isAdmin && state.settingsTab === "email") {
+    // Keep email as default for everyone; admin can switch tabs.
+  }
   fillUserSheet(user);
   const brandModel = $("brand-model");
   if (brandModel && state.settings) {
@@ -156,6 +186,12 @@ function applyRoleUI(user) {
 
 document.querySelectorAll(".nav, .mobile-nav-link").forEach((button) => {
   button.addEventListener("click", () => show(button.dataset.panel));
+});
+
+document.querySelectorAll("#settings-tabs .chip").forEach((button) => {
+  button.addEventListener("click", () => {
+    showSettingsTab(button.dataset.settingsTab);
+  });
 });
 
 $("menu-toggle")?.addEventListener("click", () => {
@@ -970,6 +1006,81 @@ $("appconfig-form").addEventListener("submit", async (event) => {
     await loadAppConfig();
   } catch (error) {
     $("appconfig-status").textContent = error.message;
+  }
+});
+
+async function loadTelegram() {
+  if (!state.isAdmin) return;
+  const data = await api("/api/admin/telegram");
+  state.telegram = data;
+  const form = $("telegram-form");
+  if (!form) return;
+  form.enabled.checked = Boolean(data.enabled);
+  form.botToken.value = "";
+  form.botToken.placeholder = data.hasBotToken
+    ? "•••••••• (leave blank to keep)"
+    : "123456:ABC…";
+  form.webhookUrl.value = data.webhookUrl || "";
+  form.webhookSecret.value = "";
+  form.webhookSecret.placeholder = data.hasWebhookSecret
+    ? "•••••••• (leave blank to keep)"
+    : "Optional shared secret";
+  const botEl = $("telegram-bot-username");
+  if (botEl) {
+    botEl.textContent = data.botUsername
+      ? `Bot username: @${data.botUsername}`
+      : data.hasBotToken
+        ? "Bot username will appear after save / getMe."
+        : "No bot token configured yet.";
+  }
+  $("telegram-status").textContent = "";
+}
+
+$("telegram-form")?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!state.isAdmin) return;
+  const form = event.currentTarget;
+  $("telegram-status").textContent = "Saving…";
+  try {
+    const body = {
+      enabled: form.enabled.checked,
+      webhookUrl: form.webhookUrl.value.trim(),
+    };
+    if (form.botToken.value.trim()) body.botToken = form.botToken.value.trim();
+    if (form.webhookSecret.value.trim()) {
+      body.webhookSecret = form.webhookSecret.value.trim();
+    }
+    const saved = await api("/api/admin/telegram", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    });
+    state.telegram = saved;
+    form.botToken.value = "";
+    form.webhookSecret.value = "";
+    $("telegram-status").textContent = "Telegram settings saved";
+    await loadTelegram();
+  } catch (error) {
+    $("telegram-status").textContent = error.message;
+  }
+});
+
+$("telegram-test-send")?.addEventListener("click", async () => {
+  if (!state.isAdmin) return;
+  const phone = ($("telegram-test-phone")?.value || "").trim();
+  const status = $("telegram-test-status");
+  if (!phone) {
+    if (status) status.textContent = "Enter a phone number";
+    return;
+  }
+  if (status) status.textContent = "Sending…";
+  try {
+    const result = await api("/api/admin/telegram/test", {
+      method: "POST",
+      body: JSON.stringify({ phone }),
+    });
+    if (status) status.textContent = result.message || "Sent";
+  } catch (error) {
+    if (status) status.textContent = error.message;
   }
 });
 
