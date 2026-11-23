@@ -423,8 +423,17 @@ def read_gmail(limit: int = 10, unread_only: bool = False) -> dict[str, Any]:
 
 
 def telegram_bot_handler_tool(inp: dict[str, Any]) -> dict[str, Any]:
+    action = str(inp.get("action", "")).strip().lower()
+    if action in {"send", "notify", "send_message"}:
+        from accounts import wants_telegram_notify
+
+        if not wants_telegram_notify():
+            return {
+                "ok": False,
+                "error": "Telegram notifications are disabled in Settings → Notifications.",
+            }
     return bot_handler.handle(
-        str(inp.get("action", "")),
+        action,
         message=inp.get("message"),
         text=inp.get("text"),
         chat_id=inp.get("chat_id"),

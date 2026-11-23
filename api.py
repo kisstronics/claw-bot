@@ -134,7 +134,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Knics Agent",
+    title="KnicsClaw Agent",
     description="Per-user agent console with Google Sign-In.",
     version="0.6.0",
     lifespan=lifespan,
@@ -235,6 +235,8 @@ class TelegramTestRequest(BaseModel):
 class ProfileUpdate(BaseModel):
     name: str | None = None
     phone: str | None = None
+    notify_email: bool | None = None
+    notify_telegram: bool | None = None
 
 
 class ScheduleWrite(BaseModel):
@@ -415,6 +417,8 @@ def write_profile(body: ProfileUpdate) -> dict[str, Any]:
             str(user["user_id"]),
             name=body.name,
             phone=body.phone,
+            notify_email=body.notify_email,
+            notify_telegram=body.notify_telegram,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -497,7 +501,7 @@ def admin_telegram_test(body: TelegramTestRequest) -> dict[str, Any]:
     result = send_to_linked_phone(
         body.phone,
         format_html_card(
-            badge="Knics",
+            badge="KnicsClaw",
             title="Admin test message",
             lines=["Your phone + chat link is working."],
         ),
