@@ -342,10 +342,17 @@ def request_otp(phone: str) -> None:
             "attempts": 0,
             "sent_at": now,
         }
-    from channels.telegram import bot_handler
+    from channels.telegram import bot_handler, escape_html, format_html_card
 
-    result = bot_handler.send(
-        f"Your Knics login code is {code}. It expires in 5 minutes.",
+    result = bot_handler.send_html(
+        format_html_card(
+            badge="Knics",
+            title="Login code",
+            lines=[
+                f"Your code is <code>{escape_html(code)}</code>",
+                "It expires in 5 minutes.",
+            ],
+        ),
         chat_id=str(user["chat_id"]),
     )
     if not result.get("ok"):
@@ -410,9 +417,10 @@ def login_with_google(credential: str) -> dict[str, Any]:
 
 
 def login_with_telegram(payload: dict[str, Any]) -> dict[str, Any]:
-    from channels.telegram import TOKEN
+    from channels.telegram import bot_token
 
-    if not TOKEN:
+    token = bot_token()
+    if not token:
         raise RuntimeError("Telegram login is not configured.")
     if not isinstance(payload, dict):
         raise ValueError("Telegram login data is missing.")
@@ -445,7 +453,7 @@ def login_with_telegram(payload: dict[str, Any]) -> dict[str, Any]:
             value = str(raw)
         lines.append(f"{key}={value}")
     data_check = "\n".join(sorted(lines))
-    secret = hashlib.sha256(TOKEN.encode("utf-8")).digest()
+    secret = hashlib.sha256(token.encode("utf-8")).digest()
     digest = hmac.new(secret, data_check.encode("utf-8"), hashlib.sha256).hexdigest()
     if not hmac.compare_digest(digest, received):
         raise PermissionError("Telegram login could not be verified.")
@@ -466,8 +474,8 @@ def login_with_telegram(payload: dict[str, Any]) -> dict[str, Any]:
         username=str(payload.get("username") or "").strip().lstrip("@"),
         private=True,
     )
-    token = create_session(user_id)
-    return {"token": token, "user": public_user(user)}
+    session = create_session(user_id)
+    return {"token": session, "user": public_user(user)}
 
 
 def verify_otp(phone: str, code: str) -> dict[str, Any]:

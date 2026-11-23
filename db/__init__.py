@@ -32,9 +32,11 @@ CONFIG_KEYS = (
     "BEDROCK_MODEL_ID",
     "AWS_REGION",
     "AWS_DEFAULT_REGION",
+    "TELEGRAM_ENABLED",
     "TELEGRAM_BOT_TOKEN",
     "TELEGRAM_WEBHOOK_URL",
     "TELEGRAM_WEBHOOK_SECRET",
+    "TELEGRAM_BOT_USERNAME",
     "TELEGRAM_CHAT_ID",
     "TELEGRAM_SSL_VERIFY",
     "TELEGRAM_CA_BUNDLE",
@@ -57,6 +59,15 @@ SECRET_CONFIG_KEYS = {
     "TELEGRAM_BOT_TOKEN",
     "TELEGRAM_WEBHOOK_SECRET",
     "GMAIL_APP_PASSWORD",
+}
+
+# Managed on the Settings → Telegram tab (hidden from generic App config form).
+TELEGRAM_SETTINGS_KEYS = {
+    "TELEGRAM_ENABLED",
+    "TELEGRAM_BOT_TOKEN",
+    "TELEGRAM_WEBHOOK_URL",
+    "TELEGRAM_WEBHOOK_SECRET",
+    "TELEGRAM_BOT_USERNAME",
 }
 
 DEFAULT_CONFIG = {
@@ -405,6 +416,8 @@ def list_app_config(*, mask_secrets: bool = True) -> list[dict[str, str]]:
     }
     items: list[dict[str, str]] = []
     for key in ADMIN_CONFIG_KEYS:
+        if key in TELEGRAM_SETTINGS_KEYS:
+            continue
         value = rows.get(key, DEFAULT_CONFIG.get(key, os.environ.get(key, "")))
         secret = key in SECRET_CONFIG_KEYS
         items.append(
