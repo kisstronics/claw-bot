@@ -131,24 +131,179 @@ def is_admin(user: dict[str, Any] | None) -> bool:
     return normalize_role((user or {}).get("role")) == "admin"
 
 
-def public_user(user: dict[str, Any]) -> dict[str, Any]:
+def public_user(user: dict[str, Any], *, reveal_phone: bool = False) -> dict[str, Any]:
     phone = str(user.get("phone") or "")
     masked = phone
-    if len(phone) > 4:
+    if not reveal_phone and len(phone) > 4:
         masked = "•" * (len(phone) - 4) + phone[-4:]
     role = normalize_role(user.get("role"))
+    chat_id = str(user.get("chat_id") or "").strip()
     return {
         "user_id": user.get("user_id"),
         "name": user.get("name") or "",
         "username": user.get("username") or "",
         "email": user.get("email") or "",
         "picture": user.get("picture") or "",
-        "phone": masked,
+        "phone": masked if not reveal_phone else phone,
         "phone_linked": bool(phone),
+        "telegram_linked": bool(chat_id and phone),
         "role": role,
         "is_admin": role == "admin",
         "auth_provider": user.get("auth_provider")
         or ("google" if str(user.get("user_id") or "").startswith("g_") else "telegram"),
+    }
+
+
+def find_by_chat_id(chat_id: str) -> dict[str, Any] | None:
+    chat_id = str(chat_id or "").strip()
+    if not chat_id:
+        return None
+    rows = db.fetch_all("SELECT * FROM users WHERE chat_id = %s", (chat_id,))
+    if not rows:
+        return None
+    # Prefer accounts that finished the Settings phone-link flow.
+    with_phone = [row for row in rows if str(row.get("phone") or "").strip()]
+    candidates = with_phone or list(rows)
+    google = [
+        row
+        for row in candidates
+        if str(row.get("auth_provider") or "") == "google"
+        or str(row.get("user_id") or "").startswith("g_")
+    ]
+    pick = (google or candidates)[0]
+    return dict(pick)
+
+
+def profile_settings(user_id: str) -> dict[str, Any]:
+    """Settings payload for the signed-in user (phone + Telegram link status)."""
+    from channels.telegram import public_status
+
+    user = get_user(user_id)
+    if not user:
+        raise LookupError("User not found")
+    telegram = public_status()
+    return {
+        "user": public_user(user, reveal_phone=True),
+        "telegram": {
+            **telegram,
+            "linked": bool(str(user.get("chat_id") or "").strip() and str(user.get("phone") or "").strip()),
+        },
+    }
+
+
+def update_profile(
+    user_id: str,
+    *,
+    name: str | None = None,
+    phone: str | None = None,
+) -> dict[str, Any]:
+    """Update display name / Telegram phone. Changing phone clears chat link."""
+    user_id = _safe_user_id(user_id)
+    current = get_user(user_id)
+    if not current:
+        raise LookupError("User not found")
+
+    updates: list[str] = []
+    params: list[Any] = []
+
+    if name is not None:
+        updates.append("name = %s")
+        params.append(str(name or "").strip())
+
+    if phone is not None:
+        raw = str(phone or "").strip()
+        if not raw:
+            updates.append("phone = %s")
+            params.append("")
+            updates.append("chat_id = %s")
+            params.append("")
+        else:
+            digits = normalize_phone(raw)
+            owner = db.fetch_one(
+                "SELECT user_id FROM users WHERE phone = %s AND user_id <> %s",
+                (digits, user_id),
+            )
+            if owner:
+                raise ValueError("That phone number is already linked to another account.")
+            current_digits = re.sub(r"\D", "", str(current.get("phone") or ""))
+            updates.append("phone = %s")
+            params.append(digits)
+            if current_digits and current_digits != digits:
+                updates.append("chat_id = %s")
+                params.append("")
+
+    if updates:
+        updates.append("updated_at = now()")
+        params.append(user_id)
+        db.execute(
+            f"UPDATE users SET {', '.join(updates)} WHERE user_id = %s",
+            tuple(params),
+        )
+    return profile_settings(user_id)
+
+
+def link_chat_by_phone(phone: str, chat_id: str) -> dict[str, Any]:
+    """
+    Attach a Telegram chat_id to the web account that already saved this phone
+    (fin-goat style linking).
+    """
+    phone = normalize_phone(phone)
+    chat_id = str(chat_id or "").strip()
+    if not chat_id:
+        raise ValueError("Missing Telegram chat id.")
+    user = find_by_phone(phone)
+    if not user:
+        raise LookupError(
+            "No Knics account has that phone yet. Save it under Settings, then share it here again."
+        )
+    owner_id = str(user["user_id"])
+    # One chat maps to one account — clear stale copies (e.g. telegram-only rows).
+    db.execute(
+        "UPDATE users SET chat_id = '', updated_at = now() WHERE chat_id = %s AND user_id <> %s",
+        (chat_id, owner_id),
+    )
+    db.execute(
+        """
+        UPDATE users
+        SET chat_id = %s, phone = %s, updated_at = now()
+        WHERE user_id = %s
+        """,
+        (chat_id, phone, owner_id),
+    )
+    return get_user(owner_id) or user
+
+
+def send_telegram_test_for_user(user_id: str) -> dict[str, Any]:
+    from channels.telegram import bot_handler, format_html_card
+
+    user = get_user(user_id)
+    if not user:
+        raise LookupError("User not found")
+    phone = str(user.get("phone") or "").strip()
+    chat_id = str(user.get("chat_id") or "").strip()
+    if not phone or not chat_id:
+        raise ValueError(
+            "Link Telegram first: save your phone in Settings, send hi to the bot, then share that phone."
+        )
+    result = bot_handler.send_html(
+        format_html_card(
+            badge="Knics",
+            title="Test message",
+            subtitle=f"Hello {user.get('name') or 'there'}",
+            lines=[
+                "Your Telegram link is working.",
+                "Reminders and agent notifications will arrive here in this format.",
+            ],
+        ),
+        chat_id=chat_id,
+    )
+    if not result.get("ok"):
+        raise RuntimeError(result.get("error") or "Could not send Telegram test message.")
+    return {
+        "ok": True,
+        "message": "Test message sent on Telegram",
+        "chatId": chat_id,
+        "phone": phone,
     }
 
 
@@ -193,7 +348,11 @@ def ensure_user(
 
     updates: list[str] = []
     params: list[Any] = []
-    if private or not current.get("chat_id"):
+    # Do not steal a chat_id already owned by a phone-linked web account.
+    owner = find_by_chat_id(chat_id) if chat_id else None
+    owner_id = str((owner or {}).get("user_id") or "")
+    can_claim_chat = not owner_id or owner_id == user_id
+    if can_claim_chat and (private or not current.get("chat_id")):
         updates.append("chat_id = %s")
         params.append(chat_id)
     if name:

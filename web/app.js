@@ -3,9 +3,10 @@ const state = {
   settings: null,
   user: null,
   isAdmin: false,
-  settingsTab: "email",
+  settingsTab: "profile",
   users: { page: 1, page_size: 20, q: "", role: "", sort: "created_at", order: "desc" },
   telegram: null,
+  profile: null,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -18,7 +19,7 @@ function show(panel) {
     panel = "talk";
   }
   // Legacy deep-links from older nav labels.
-  if (["users", "models", "appconfig", "email", "telegram"].includes(panel)) {
+  if (["users", "models", "appconfig", "email", "telegram", "profile"].includes(panel)) {
     state.settingsTab = panel;
     panel = "settings";
   }
@@ -35,9 +36,9 @@ function show(panel) {
 }
 
 function showSettingsTab(tab) {
-  let next = tab || "email";
+  let next = tab || "profile";
   if (ADMIN_SETTINGS_TABS.has(next) && !state.isAdmin) {
-    next = "email";
+    next = "profile";
   }
   state.settingsTab = next;
   document.querySelectorAll("#settings-tabs .chip").forEach((node) => {
@@ -46,6 +47,7 @@ function showSettingsTab(tab) {
   document.querySelectorAll("[data-settings-pane]").forEach((node) => {
     node.hidden = node.dataset.settingsPane !== next;
   });
+  if (next === "profile") loadProfile();
   if (next === "users") loadUsers();
   if (next === "models") loadSettings();
   if (next === "appconfig") loadAppConfig();
@@ -170,9 +172,7 @@ function applyRoleUI(user) {
     node.hidden = !state.isAdmin;
   });
   if (!state.isAdmin && ADMIN_SETTINGS_TABS.has(state.settingsTab)) {
-    state.settingsTab = "email";
-  } else if (state.isAdmin && state.settingsTab === "email") {
-    // Keep email as default for everyone; admin can switch tabs.
+    state.settingsTab = "profile";
   }
   fillUserSheet(user);
   const brandModel = $("brand-model");
@@ -805,6 +805,92 @@ async function loadEmail() {
   form.app_password.required = !data.password_set;
   $("email-status").textContent = data.password_set ? "Password saved" : "";
 }
+
+function fillProfileForm(data) {
+  state.profile = data;
+  const user = data.user || {};
+  const telegram = data.telegram || {};
+  const form = $("profile-form");
+  if (!form) return;
+  form.name.value = user.name || "";
+  form.phone.value = user.phone || "";
+
+  const statusEl = $("profile-telegram-status");
+  if (statusEl) {
+    statusEl.innerHTML = telegram.linked
+      ? "Status: <strong>Telegram linked</strong>"
+      : "Status: <strong>Not linked</strong> — send <code>hi</code> to the bot";
+  }
+
+  const botLink = $("profile-bot-link");
+  if (botLink) {
+    if (telegram.botUsername) {
+      botLink.href = `https://t.me/${telegram.botUsername}`;
+      botLink.textContent = `@${telegram.botUsername}`;
+      botLink.hidden = false;
+    } else {
+      botLink.removeAttribute("href");
+      botLink.textContent = "the Knics Telegram bot";
+    }
+  }
+
+  const disabledNote = $("profile-telegram-disabled");
+  if (disabledNote) disabledNote.hidden = Boolean(telegram.enabled);
+
+  const testBtn = $("profile-telegram-test");
+  if (testBtn) testBtn.disabled = !telegram.linked;
+}
+
+async function loadProfile() {
+  const data = await api("/api/profile");
+  fillProfileForm(data);
+  $("profile-status").textContent = "";
+  if (data.user) {
+    state.user = { ...state.user, ...data.user };
+    fillUserSheet(state.user);
+  }
+}
+
+$("profile-form")?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  $("profile-status").textContent = "Saving…";
+  try {
+    const saved = await api("/api/profile", {
+      method: "PUT",
+      body: JSON.stringify({
+        name: form.name.value.trim(),
+        phone: form.phone.value.trim(),
+      }),
+    });
+    fillProfileForm(saved);
+    $("profile-status").textContent = "Saved";
+    if (saved.user) {
+      state.user = { ...state.user, ...saved.user };
+      fillUserSheet(state.user);
+      const brandUser = $("brand-user");
+      if (brandUser) {
+        const label = userLabel(state.user);
+        brandUser.textContent = label;
+        brandUser.title = label;
+      }
+    }
+  } catch (error) {
+    $("profile-status").textContent = error.message;
+  }
+});
+
+$("profile-telegram-test")?.addEventListener("click", async () => {
+  const status = $("profile-status");
+  if (status) status.textContent = "Sending…";
+  try {
+    const result = await api("/api/profile/telegram/test", { method: "POST" });
+    if (status) status.textContent = result.message || "Sent";
+    await loadProfile();
+  } catch (error) {
+    if (status) status.textContent = error.message;
+  }
+});
 
 $("email-form").addEventListener("submit", async (event) => {
   event.preventDefault();

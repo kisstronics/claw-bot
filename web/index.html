@@ -217,11 +217,42 @@
         </header>
 
         <div class="chip-row" id="settings-tabs" role="tablist" aria-label="Settings sections">
+          <button type="button" class="chip" data-settings-tab="profile">Profile</button>
+          <button type="button" class="chip" data-settings-tab="email">Email</button>
           <button type="button" class="chip admin-only" data-settings-tab="users" hidden>Users</button>
           <button type="button" class="chip admin-only" data-settings-tab="models" hidden>Models</button>
           <button type="button" class="chip admin-only" data-settings-tab="appconfig" hidden>App config</button>
-          <button type="button" class="chip" data-settings-tab="email">Email</button>
           <button type="button" class="chip admin-only" data-settings-tab="telegram" hidden>Telegram</button>
+        </div>
+
+        <div class="settings-pane" id="settings-pane-profile" data-settings-pane="profile" hidden>
+          <form id="profile-form" class="card form-grid">
+            <label class="wide">Display name
+              <input name="name" placeholder="Your name" />
+            </label>
+            <label class="wide">Telegram phone
+              <input name="phone" type="tel" placeholder="+91…" />
+            </label>
+            <div class="wide panel-note" id="profile-telegram-note">
+              <p id="profile-telegram-status" class="note"></p>
+              <ol class="profile-steps note">
+                <li>Save your Telegram phone number here (with country code).</li>
+                <li>
+                  Open <a id="profile-bot-link" href="#" target="_blank" rel="noreferrer">the Knics Telegram bot</a>
+                  and send <code>hi</code>.
+                </li>
+                <li>Share the same phone number when the bot asks.</li>
+              </ol>
+              <p id="profile-telegram-disabled" class="note" hidden>
+                Telegram bot is not configured yet. Ask an admin to set the token under Settings → Telegram.
+              </p>
+            </div>
+            <div class="form-actions">
+              <button type="submit">Save profile</button>
+              <button type="button" id="profile-telegram-test" class="ghost">Send test message</button>
+              <span id="profile-status" class="status"></span>
+            </div>
+          </form>
         </div>
 
         <div class="settings-pane" id="settings-pane-users" data-settings-pane="users" hidden>

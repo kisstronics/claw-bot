@@ -133,6 +133,28 @@ main {
   height: 18px;
   accent-color: var(--accent);
 }
+.panel-note {
+  border: 1px solid var(--line);
+  background: #faf6ef;
+  border-radius: 14px;
+  padding: 14px 16px;
+  display: grid;
+  gap: 10px;
+}
+.profile-steps {
+  margin: 0;
+  padding-left: 1.2rem;
+  display: grid;
+  gap: 6px;
+  line-height: 1.45;
+}
+.profile-steps code {
+  font-size: 0.85em;
+  background: rgba(0,0,0,0.05);
+  padding: 1px 5px;
+  border-radius: 6px;
+}
+#profile-bot-link { color: var(--accent); }
 .prose a { color: var(--accent); }
 .panel-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; margin-bottom: 18px; }
 .eyebrow { margin: 0 0 4px; letter-spacing: 0.14em; text-transform: uppercase; font-size: 0.72rem; color: var(--accent); }
