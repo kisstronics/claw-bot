@@ -232,6 +232,11 @@ class TelegramTestRequest(BaseModel):
     phone: str = Field(..., min_length=1)
 
 
+class ProfileUpdate(BaseModel):
+    name: str | None = None
+    phone: str | None = None
+
+
 class ScheduleWrite(BaseModel):
     name: str = Field(..., min_length=1, max_length=64)
     every_seconds: int = Field(default=3600, ge=5, le=86400 * 7)
@@ -394,6 +399,40 @@ def read_settings() -> dict[str, Any]:
             "max_input_tokens": db.get_config_int("MAX_INPUT_TOKENS", 2000),
         },
     }
+
+
+@app.get("/api/profile")
+def read_profile() -> dict[str, Any]:
+    user = _require_user()
+    return accounts.profile_settings(str(user["user_id"]))
+
+
+@app.put("/api/profile")
+def write_profile(body: ProfileUpdate) -> dict[str, Any]:
+    user = _require_user()
+    try:
+        return accounts.update_profile(
+            str(user["user_id"]),
+            name=body.name,
+            phone=body.phone,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/api/profile/telegram/test")
+def profile_telegram_test() -> dict[str, Any]:
+    user = _require_user()
+    try:
+        return accounts.send_telegram_test_for_user(str(user["user_id"]))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @app.put("/api/settings")

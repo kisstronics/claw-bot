@@ -548,14 +548,24 @@ def dispatch_update(
     if not user_id or not chat_id:
         return
 
-    from accounts import ensure_user, link_phone
+    from accounts import (
+        ensure_user,
+        find_by_chat_id,
+        link_chat_by_phone,
+        phone_from_text,
+    )
     from user_scope import reset_reply_chat, reset_user, use_reply_chat, use_user
 
     private = chat.get("type") == "private"
     name = " ".join(
         part for part in (sender.get("first_name"), sender.get("last_name")) if part
     ).strip()
-    user_token = use_user(user_id)
+
+    # Prefer the web account already linked to this chat (Google + phone).
+    linked = find_by_chat_id(chat_id)
+    scope_user_id = str(linked["user_id"]) if linked else user_id
+
+    user_token = use_user(scope_user_id)
     reply_token = use_reply_chat(chat_id)
     try:
         ensure_user(
@@ -566,7 +576,7 @@ def dispatch_update(
             private=private,
         )
         if on_user:
-            on_user(user_id)
+            on_user(scope_user_id)
 
         contact = message.get("contact") if isinstance(message.get("contact"), dict) else None
         text = str(message.get("text") or "").strip()
@@ -575,6 +585,59 @@ def dispatch_update(
             f"text_digits={sum(ch.isdigit() for ch in text)}",
             flush=True,
         )
+
+        def _link_phone_flow(raw_phone: str) -> None:
+            if not private:
+                bot_handler.send_html(
+                    format_html_card(
+                        badge="Knics",
+                        title="Private chat required",
+                        lines=["Linking only works in a private chat with the bot."],
+                    ),
+                    chat_id=chat_id,
+                )
+                return
+            try:
+                linked_user = link_chat_by_phone(raw_phone, chat_id)
+            except ValueError as exc:
+                bot_handler.send_html(
+                    format_html_card(
+                        badge="Knics",
+                        title="Invalid phone",
+                        lines=[
+                            escape_html(str(exc)),
+                            "Use country code, e.g. <code>+9198XXXXXXXX</code>.",
+                        ],
+                    ),
+                    chat_id=chat_id,
+                )
+                return
+            except LookupError as exc:
+                bot_handler.send_html(
+                    format_html_card(
+                        badge="Knics",
+                        title="Phone not found",
+                        lines=[escape_html(str(exc))],
+                    ),
+                    chat_id=chat_id,
+                    reply_markup=REMOVE_KEYBOARD,
+                )
+                return
+            print("[telegram] phone linked to web account", flush=True)
+            bot_handler.send_html(
+                format_html_card(
+                    badge="Linked",
+                    title="Knics connected",
+                    subtitle=str(linked_user.get("name") or ""),
+                    lines=[
+                        "Reminders and agent notifications will arrive here.",
+                        "You can also type here anytime to talk to your agent.",
+                    ],
+                ),
+                chat_id=chat_id,
+                reply_markup=REMOVE_KEYBOARD,
+            )
+
         if contact:
             contact_user = str(contact.get("user_id") or "")
             if contact_user and contact_user != user_id:
@@ -588,70 +651,40 @@ def dispatch_update(
                     reply_markup=SHARE_KEYBOARD,
                 )
                 return
-            try:
-                link_phone(user_id, str(contact.get("phone_number") or ""))
-            except (ValueError, LookupError) as exc:
-                bot_handler.send_html(
-                    format_html_card(
-                        badge="Knics",
-                        title="Could not save phone",
-                        lines=[escape_html(str(exc))],
-                    ),
-                    chat_id=chat_id,
-                )
-                return
-            print("[telegram] contact phone linked", flush=True)
-            bot_handler.send_html(
-                format_html_card(
-                    badge="Knics",
-                    title="Phone number saved",
-                    lines=["Sign in on the website with Google to open your console."],
-                ),
-                chat_id=chat_id,
-                reply_markup=REMOVE_KEYBOARD,
-            )
+            _link_phone_flow(str(contact.get("phone_number") or ""))
             return
 
         if not text:
             return
-        from accounts import phone_from_text
 
         typed_phone = phone_from_text(text)
         if typed_phone and private:
-            try:
-                link_phone(user_id, typed_phone)
-            except (ValueError, LookupError) as exc:
+            _link_phone_flow(typed_phone)
+            return
+
+        command = text.split()[0].split("@", 1)[0].lower()
+        if command in {"/start", "/help", "hi", "hello"}:
+            existing = find_by_chat_id(chat_id)
+            if existing and str(existing.get("phone") or "").strip():
                 bot_handler.send_html(
                     format_html_card(
                         badge="Knics",
-                        title="Could not save phone",
-                        lines=[escape_html(str(exc))],
+                        title="Already linked",
+                        subtitle=str(existing.get("name") or ""),
+                        lines=["Notifications will continue to arrive in this chat."],
                     ),
                     chat_id=chat_id,
                 )
                 return
-            print(f"[telegram] phone linked digits={len(typed_phone)}", flush=True)
             bot_handler.send_html(
                 format_html_card(
                     badge="Knics",
-                    title="Phone number saved",
-                    lines=["Sign in on the website with Google to open your console."],
-                ),
-                chat_id=chat_id,
-                reply_markup=REMOVE_KEYBOARD,
-            )
-            return
-        command = text.split()[0].split("@", 1)[0].lower()
-        if command in {"/start", "/help"}:
-            bot_handler.send_html(
-                format_html_card(
-                    badge="Knics",
-                    title="Ready when you are",
+                    title="Welcome",
                     lines=[
-                        "Sign in with Google on the website to open the console.",
-                        "Or type here anytime to talk to your agent.",
+                        "<b>Link notifications in 2 steps:</b>",
+                        "1. Save your Telegram phone in Knics → Settings → Profile",
+                        "2. Share that same number here (button below) or type it with country code",
                     ],
-                    footer="Share your phone with the button if you want login codes.",
                 ),
                 chat_id=chat_id,
                 reply_markup=SHARE_KEYBOARD,
@@ -661,12 +694,12 @@ def dispatch_update(
         bot_handler.record_inbound(
             chat_id,
             text,
-            user_id=user_id,
+            user_id=scope_user_id,
             user=name or None,
             username=sender.get("username"),
         )
         try:
-            reply = on_text(user_id, chat_id, text)
+            reply = on_text(scope_user_id, chat_id, text)
         except Exception as exc:  # noqa: BLE001
             logger.exception("Agent error from Telegram")
             reply = f"Error: {exc}"
